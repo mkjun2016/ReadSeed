@@ -1,0 +1,5 @@
+requests
+python-dotenv
+kiwipiepy
+g2pkk
+python-mecab-ko
