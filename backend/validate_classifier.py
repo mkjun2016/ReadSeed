@@ -13,6 +13,7 @@ ReadSeed - 음운변동 유형 분류기 검증 (기존 자모 정규식 방식 
 import json
 import re
 from collections import Counter
+from pathlib import Path
 
 from g2pkk import G2p
 
@@ -179,7 +180,8 @@ def main():
         "per_category_old_correct": dict(per_category_old_correct),
         "per_category_new_correct": dict(per_category_new_correct),
     }
-    with open("validation_result.json", "w", encoding="utf8") as f:
+    result_path = Path(__file__).resolve().parent / "validation_result.json"
+    with open(result_path, "w", encoding="utf8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
 

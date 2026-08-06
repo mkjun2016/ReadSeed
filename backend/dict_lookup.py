@@ -14,11 +14,12 @@ API: 한국어기초사전 Open API (https://krdict.korean.go.kr/api/search)
 
 import os
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 API_KEY = os.environ["KRDICT_API_KEY"]
 BASE_URL = "https://krdict.korean.go.kr/api/search"

@@ -16,11 +16,12 @@ API: 우리말샘 Open API (https://opendict.korean.go.kr)
 """
 
 import os
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 API_KEY = os.environ["URIMALSAM_API_KEY"]
 SEARCH_URL = "https://opendict.korean.go.kr/api/search"
