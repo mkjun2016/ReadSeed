@@ -34,9 +34,9 @@
 
 # 완료 내역
 
-- 2026-07-31 · 전문규 · 한국어기초사전 Open API 연동 (`backend/dict_lookup.py`)
-- 2026-08-01 · 전문규 · 우리말샘 Open API 연동 (`backend/urimalsam_lookup.py`)
-- 2026-08-02 · 전문규 · 음운변동 분류기 형태소 경계 기준 재작성 및 검증 (`backend/phonology_rules.py`, `backend/validate_classifier.py`) — 정확도 21.3% → 64.0%
-- 2026-08-02 · 전문규 · 모두의 말뭉치(NIKL_MP_2025_v1.0) 확보, Kiwi 형태소 분석 정확도 검증 (`backend/validate_morphology.py`) — 80.1%
-- 2026-08-02 · 전문규 · 백엔드 파이프라인 통합 (`backend/pipeline.py`) — 형태소 분석·발음 주석·사전 조회를 "문장 -> 주석 후보 리스트" 인터페이스 하나로 묶음
-- 2026-08-02 · 전문규 · 저장소를 `backend/`·`frontend/`로 분리
+- 2026-07-31 · 한국어기초사전 Open API 연동 (`backend/dict_lookup.py`)
+- 2026-08-01 · 우리말샘 Open API 연동 (`backend/urimalsam_lookup.py`)
+- 2026-08-02 · 음운변동 분류기 형태소 경계 기준 재작성 및 검증 (`backend/phonology_rules.py`, `backend/validate_classifier.py`) — 정확도 21.3% → 64.0%
+- 2026-08-02 · 모두의 말뭉치(NIKL_MP_2025_v1.0) 확보, Kiwi 형태소 분석 정확도 검증 (`backend/validate_morphology.py`) — 80.1%
+- 2026-08-02 · 백엔드 파이프라인 통합 (`backend/pipeline.py`) — 형태소 분석·발음 주석·사전 조회를 "문장 -> 주석 후보 리스트" 인터페이스 하나로 묶음
+- 2026-08-02 · 저장소를 `backend/`·`frontend/`로 분리
