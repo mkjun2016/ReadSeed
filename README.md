@@ -5,7 +5,47 @@
 # 구조
 
 - `backend/` — 형태소 분석·발음 규칙·사전 조회·파이프라인 (Python)
-- `frontend/` — 크롬 확장 프로그램 (Manifest V3)
+- `frontend/` — 크롬 확장 프로그램 (Manifest V3, Popup·본문 추출·Overlay)
+- `AGENTS.md`, `claude.md` — 동일한 프로젝트 원칙, 구현 상태, 실행 방법, TODO
+
+# 현재 동작
+
+Chrome에서 ReadSeed 아이콘을 누르고 **분석하기**를 누르면 페이지의 본문을 최대 20문장으로 나눈다. 각 문장은 로컬 FastAPI의 `POST /annotate`로 전달되고, 신뢰 가능한 표기-발음 불일치만 원문 위의 별도 Overlay에 `[발음]` 형태로 표시된다.
+
+- 원문 텍스트 노드·링크는 바꾸거나 감싸지 않는다.
+- 주석을 위한 줄간격은 분석 중에만 임시로 늘리고, 재분석·제거 시 되돌린다.
+- 요청은 최대 2개씩 병렬 처리하며, 서버가 꺼져 있거나 외부 사전 조회가 실패해도 확장이 중단되지 않도록 처리한다.
+
+## 로컬 실행
+
+```bash
+cd backend
+../.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+../.venv/bin/python -m uvicorn api:app --host 127.0.0.1 --port 8000
+```
+
+`backend/.env`에는 `KRDICT_API_KEY`를 설정한다. `URIMALSAM_API_KEY`는 보조 사전 조회용으로, 없어도 발음 분석 요청 전체가 실패하지 않는다.
+
+서버 확인:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/annotate \
+  -H 'Content-Type: application/json' \
+  -d '{"sentence":"같이 국밥을 먹었다."}'
+```
+
+Chrome에서는 `chrome://extensions` → 개발자 모드 → **압축해제된 확장 프로그램 로드**에서 `frontend/` 폴더를 선택한다.
+
+## API 요약
+
+| 엔드포인트 | 요청 | 응답 |
+|---|---|---|
+| `GET /health` | 없음 | `{ "status": "ok" }` |
+| `POST /annotate` | `{ "sentence": "같이 국밥을 먹었다." }` | 어절별 표기·발음·음운변동 유형·신뢰도 목록 |
+
+빈 문장은 422, 필수 API 키 누락은 503, 외부 API 시간 초과는 504로 응답한다.
 
 # 데이터 정리
 
@@ -40,3 +80,10 @@
 - 2026-08-02 · 모두의 말뭉치(NIKL_MP_2025_v1.0) 확보, Kiwi 형태소 분석 정확도 검증 (`backend/validate_morphology.py`) — 80.1%
 - 2026-08-02 · 백엔드 파이프라인 통합 (`backend/pipeline.py`) — 형태소 분석·발음 주석·사전 조회를 "문장 -> 주석 후보 리스트" 인터페이스 하나로 묶음
 - 2026-08-02 · 저장소를 `backend/`·`frontend/`로 분리
+- [x] 1단계 · 실행 환경 및 Python 의존성 구성
+- [x] 2단계 · FastAPI API 추가 (`backend/api.py`: `/health`, `/annotate`, CORS, 오류 처리)
+- [x] 3단계 · Manifest V3 Chrome Extension 추가 (Popup, 본문 추출, 콘솔 출력)
+- [x] 4단계 · Extension ↔ 로컬 API 연동 (문장 분리, 최대 2개 동시 요청, 실패 복구)
+- [x] 5단계 · 별도 발음 Overlay 및 스크롤·창 크기 변경 위치 갱신
+
+다음 작업과 남은 검증 항목은 [AGENTS.md](AGENTS.md)와 [claude.md](claude.md)의 `TODO` 섹션에 정리한다.

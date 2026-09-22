@@ -23,16 +23,30 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-API_KEY = os.environ["URIMALSAM_API_KEY"]
+API_KEY = os.getenv("URIMALSAM_API_KEY")
 SEARCH_URL = "https://opendict.korean.go.kr/api/search"
 VIEW_URL = "https://opendict.korean.go.kr/api/view"
+_api_unavailable = False
 
 
 def search(word: str) -> list[dict]:
     """표제어로 검색해 (표제어, 뜻풀이, target_code 등) 후보 목록을 반환. 발음은 미포함."""
+    global _api_unavailable
+
+    # 우리말샘은 한국어기초사전의 보조 사전이다. 키가 없더라도 발음·형태소
+    # 분석 전체를 실패시키지 않고 뜻풀이 후보만 비운다.
+    if not API_KEY:
+        return []
+    if _api_unavailable:
+        return []
+
     params = {"key": API_KEY, "q": word, "req_type": "json"}
-    resp = requests.get(SEARCH_URL, params=params, timeout=10)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(SEARCH_URL, params=params, timeout=3)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException:
+        _api_unavailable = True
+        return []
     channel = resp.json()["channel"]
 
     entries = []
@@ -52,14 +66,25 @@ def search(word: str) -> list[dict]:
 
 def view(target_code: str) -> dict:
     """target_code로 상세 조회해 표준 발음을 포함한 정보를 반환."""
+    global _api_unavailable
+
+    if not API_KEY:
+        return {"표제어": None, "발음": None, "뜻풀이": None}
+    if _api_unavailable:
+        return {"표제어": None, "발음": None, "뜻풀이": None}
+
     params = {
         "key": API_KEY,
         "q": target_code,
         "method": "target_code",
         "req_type": "json",
     }
-    resp = requests.get(VIEW_URL, params=params, timeout=10)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(VIEW_URL, params=params, timeout=3)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException:
+        _api_unavailable = True
+        return {"표제어": None, "발음": None, "뜻풀이": None}
     item = resp.json()["channel"]["item"]
     word_info = item["wordInfo"]  # 표제어에 발음 정보가 없으면 통째로 {}로 옴
     return {

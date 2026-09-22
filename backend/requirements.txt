@@ -3,3 +3,5 @@ python-dotenv
 kiwipiepy
 g2pkk
 python-mecab-ko
+fastapi
+uvicorn[standard]

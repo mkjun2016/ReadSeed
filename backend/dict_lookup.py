@@ -21,15 +21,29 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-API_KEY = os.environ["KRDICT_API_KEY"]
+API_KEY = os.getenv("KRDICT_API_KEY")
 BASE_URL = "https://krdict.korean.go.kr/api/search"
+_api_unavailable = False
 
 
 def lookup(word: str) -> list[dict]:
     """표제어로 한국어기초사전을 검색해 뜻풀이 목록을 반환. 미등재 시 빈 리스트."""
+    global _api_unavailable
+
+    if not API_KEY:
+        raise RuntimeError("KRDICT_API_KEY is not configured")
+    if _api_unavailable:
+        return []
+
     params = {"key": API_KEY, "q": word, "part": "word", "method": "exact"}
-    resp = requests.get(BASE_URL, params=params, timeout=10)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(BASE_URL, params=params, timeout=3)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException:
+        # 뜻풀이 조회는 발음·형태소 분석의 보조 기능이다. 외부 사전이 잠시
+        # 불안정하면 이번 서버 실행 동안 추가 요청을 피하고 빈 후보만 반환한다.
+        _api_unavailable = True
+        return []
     return _parse(resp.text)
 
 

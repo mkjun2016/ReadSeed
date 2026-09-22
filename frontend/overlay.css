@@ -1,0 +1,37 @@
+/* ReadSeed pronunciation layer: a non-interactive, document-independent surface. */
+#readseed-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+}
+
+#readseed-overlay .readseed-pronunciation {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 1px solid oklch(0.554 0.214 280 / 0.16);
+  border-radius: 6px;
+  background: oklch(0.554 0.214 280 / 0.06);
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
+  color: oklch(0.483 0.229 280);
+  font-family: "Inter", "NotoSansKR", "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", "Roboto", system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  transition: opacity 150ms cubic-bezier(0.3, 0, 0, 1);
+}
+
+/* A temporary inter-line lane for pronunciation labels; source text stays intact. */
+.readseed-annotation-space:is(p, li, blockquote, dd),
+.readseed-annotation-space :is(p, li, blockquote, dd) {
+  line-height: calc(1em + 34px) !important;
+}
