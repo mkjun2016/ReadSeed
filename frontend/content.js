@@ -49,11 +49,13 @@
     ".story-body",
   ].join(",");
 
+  const ANNOTATION_BLOCK_SELECTOR = "p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6";
+
   const overlayState = {
     root: null,
     entries: [],
     contentRoot: null,
-    spacedRoot: null,
+    spacedElements: new Map(),
     frame: null,
   };
 
@@ -155,10 +157,25 @@
 
   function clearOverlay() {
     overlayState.root?.remove();
-    overlayState.spacedRoot?.classList.remove("readseed-annotation-space");
+    overlayState.spacedElements.forEach((previousClass, element) => {
+      if (previousClass === null) {
+        element.removeAttribute("class");
+      } else {
+        element.setAttribute("class", previousClass);
+      }
+    });
     overlayState.root = null;
     overlayState.entries = [];
-    overlayState.spacedRoot = null;
+    overlayState.spacedElements.clear();
+  }
+
+  function reserveAnnotationSpace(range, root) {
+    const parent = range.startContainer.parentElement;
+    const block = parent?.closest(ANNOTATION_BLOCK_SELECTOR);
+    if (!block || !root.contains(block) || block.classList.contains("readseed-annotation-space")) return;
+
+    overlayState.spacedElements.set(block, block.getAttribute("class"));
+    block.classList.add("readseed-annotation-space");
   }
 
   function updateOverlayPositions() {
@@ -218,12 +235,6 @@
     const { nodes, text } = collectTextNodes(root);
     if (!nodes.length) return 0;
 
-    // Reserve vertical room in the content flow rather than letting a visual
-    // label float over the preceding line. This changes only a temporary class
-    // on the selected article root; text nodes and page structure stay intact.
-    root.classList.add("readseed-annotation-space");
-    overlayState.spacedRoot = root;
-
     const layer = document.createElement("div");
     layer.id = "readseed-overlay";
     layer.setAttribute("aria-hidden", "true");
@@ -239,6 +250,7 @@
 
       const range = rangeForText(nodes, start, cursor);
       if (!range) continue;
+      reserveAnnotationSpace(range, root);
 
       const label = document.createElement("span");
       label.className = "readseed-pronunciation";

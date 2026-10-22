@@ -30,8 +30,7 @@
   transition: opacity 150ms cubic-bezier(0.3, 0, 0, 1);
 }
 
-/* A temporary inter-line lane for pronunciation labels; source text stays intact. */
-.readseed-annotation-space:is(p, li, blockquote, dd),
-.readseed-annotation-space :is(p, li, blockquote, dd) {
-  line-height: calc(1em + 34px) !important;
+/* Add a temporary annotation lane only to text blocks that actually have labels. */
+.readseed-annotation-space:is(p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6) {
+  line-height: calc(1em + 22px) !important;
 }
