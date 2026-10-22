@@ -74,6 +74,7 @@ Chrome에서는 `chrome://extensions` → 개발자 모드 → **압축해제된
 
 # 완료 내역
 
+- 2026-10-22 · 실제 브라우저 P0 회귀 테스트 완료 — 뉴스·블로그·위키·문서 본문 추출과 데스크톱·모바일 Overlay를 검증했고, 주석이 있는 블록에만 임시 줄간격을 적용하도록 개선. 주석 16개 충돌·숨김 0건, 링크·선택·복사·스크롤·원문 복원 정상
 - 2026-07-31 · 한국어기초사전 Open API 연동 (`backend/dict_lookup.py`)
 - 2026-08-01 · 우리말샘 Open API 연동 (`backend/urimalsam_lookup.py`)
 - 2026-08-02 · 음운변동 분류기 형태소 경계 기준 재작성 및 검증 (`backend/phonology_rules.py`, `backend/validate_classifier.py`) — 정확도 21.3% → 64.0%
