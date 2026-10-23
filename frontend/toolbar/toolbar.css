@@ -31,8 +31,7 @@ html, body {
   height: 56px;
   padding: 0 16px;
   overflow-x: auto;
-  /* Tinted surface and a brand rule keep the bar from blending into page headers. */
-  border-bottom: 2px solid var(--brand);
+  /* A tinted surface keeps the bar from blending into page headers. */
   background: var(--bar-surface);
   scrollbar-width: none;
 }
