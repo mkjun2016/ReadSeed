@@ -9,6 +9,7 @@
   --brand: oklch(0.47 0.10 155);
   --brand-strong: oklch(0.41 0.10 155);
   --brand-tint: oklch(0.47 0.10 155 / 0.12);
+  --bar-surface: oklch(0.955 0.03 155);
   --hover: oklch(0 0 0 / 0.05);
   --ease: cubic-bezier(0.3, 0, 0, 1);
   font-family: "Inter", "Pretendard", "Noto Sans KR", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -30,9 +31,9 @@ html, body {
   height: 56px;
   padding: 0 16px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 1px 3px oklch(0 0 0 / 0.04);
+  /* Tinted surface and a brand rule keep the bar from blending into page headers. */
+  border-bottom: 2px solid var(--brand);
+  background: var(--bar-surface);
   scrollbar-width: none;
 }
 
