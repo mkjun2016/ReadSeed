@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReadSeed</title>
+    <link rel="stylesheet" href="toolbar.css" />
+  </head>
+  <body>
+    <div class="bar" role="toolbar" aria-label="ReadSeed 읽기 도구">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 21c0-6 0-9 4.5-12.5C18 7.3 20 7 21 7c0 5-3 9-9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 21c0-4-1-7-4.5-9C6 11.2 4.5 11 3 11c0 4 2.5 6.5 9 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="name">ReadSeed</span>
+      </div>
+
+      <div class="chips" aria-label="표시할 읽기 도움">
+        <label class="chip"><input id="pronunciation" type="checkbox" /><span>발음 주석</span></label>
+        <label class="chip"><input id="gloss" type="checkbox" /><span>쉬운 말 풀이</span></label>
+        <label class="chip"><input id="keyInfo" type="checkbox" /><span>핵심 정보</span></label>
+        <label class="chip"><input id="readingGuide" type="checkbox" /><span>동시 읽기</span></label>
+        <label class="chip"><input id="selectionOnly" type="checkbox" /><span>선택 영역만</span></label>
+      </div>
+
+      <p id="status" role="status"></p>
+
+      <div class="actions">
+        <button id="analyze" class="primary" type="button">분석하기</button>
+        <button id="clear" class="ghost" type="button">지우기</button>
+        <span class="divider" aria-hidden="true"></span>
+        <button id="toggleSettings" class="ghost icon" type="button" aria-expanded="false" aria-controls="settings" title="설정">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <span class="sr-only">설정</span>
+        </button>
+        <button id="closeToolbar" class="ghost icon" type="button" title="도구 막대 닫기">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span class="sr-only">닫기</span>
+        </button>
+      </div>
+    </div>
+
+    <section id="settings" class="settings" hidden>
+      <div class="fields">
+        <label class="field">주석 크기
+          <select id="annotationSize">
+            <option value="small">작게</option><option value="medium">보통</option><option value="large">크게</option>
+          </select>
+        </label>
+        <label class="field">주석 밀도
+          <select id="density">
+            <option value="low">낮게</option><option value="medium">보통</option><option value="high">높게</option>
+          </select>
+        </label>
+        <label class="field">읽기 속도
+          <select id="readingSpeed">
+            <option value="slow">천천히</option><option value="normal">보통</option><option value="fast">빠르게</option>
+          </select>
+        </label>
+      </div>
+
+      <details class="evaluation-panel">
+        <summary>실사용 평가 기록</summary>
+        <div class="evaluation">
+          <label class="field">조건
+            <select id="evaluationCondition"><option value="baseline">보조 기능 없이</option><option value="readseed">ReadSeed 사용</option></select>
+          </label>
+          <label class="field">정답 수<input id="scoreCorrect" type="number" min="0" value="0" /></label>
+          <label class="field">문항 수<input id="scoreTotal" type="number" min="0" value="0" /></label>
+          <div class="evaluation-actions">
+            <button id="evaluationStart" class="ghost" type="button">측정 시작</button>
+            <button id="evaluationFinish" class="ghost" type="button">측정 완료</button>
+            <button id="evaluationExport" class="ghost" type="button">결과 내보내기</button>
+          </div>
+          <p id="evaluationSummary"></p>
+        </div>
+      </details>
+    </section>
+    <script src="toolbar.js"></script>
+  </body>
+</html>

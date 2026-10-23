@@ -9,10 +9,11 @@
   user-select: none;
   font-family: "Inter", "NotoSansKR", "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --readseed-label-size: 11px;
+  --readseed-lane: 20px;
 }
 
-#readseed-overlay[data-size="small"] { --readseed-label-size: 9px; }
-#readseed-overlay[data-size="large"] { --readseed-label-size: 13px; }
+#readseed-overlay[data-size="small"] { --readseed-label-size: 10px; --readseed-lane: 18px; }
+#readseed-overlay[data-size="large"] { --readseed-label-size: 13px; --readseed-lane: 23px; }
 
 #readseed-overlay .readseed-pronunciation,
 #readseed-overlay .readseed-gloss {
@@ -20,14 +21,16 @@
   z-index: 2;
   display: block;
   box-sizing: border-box;
-  max-width: min(320px, 70vw);
-  padding: 1px 5px;
+  height: calc(var(--readseed-lane) - 2px);
+  max-width: min(260px, 60vw);
+  padding: 0 5px;
+  overflow: hidden;
   border-radius: 6px;
-  box-shadow: 0 1px 4px oklch(0 0 0 / 0.12);
   font-size: var(--readseed-label-size);
   font-weight: 700;
-  line-height: 16px;
+  line-height: calc(var(--readseed-lane) - 4px);
   letter-spacing: -0.01em;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -38,15 +41,14 @@
 }
 
 #readseed-overlay .readseed-gloss {
-  overflow: hidden;
   border: 1px solid oklch(0.60 0.12 170 / 0.22);
   background: oklch(0.98 0.025 170 / 0.98);
   color: oklch(0.38 0.11 170);
-  text-overflow: ellipsis;
+  font-weight: 600;
 }
 
-#readseed-overlay [data-position="above"] { transform: translate(-50%, -100%); }
-#readseed-overlay [data-position="below"] { transform: translate(-50%, 0); }
+#readseed-overlay [data-position="above"] { transform: translateY(-100%); }
+#readseed-overlay [data-position="below"] { transform: none; }
 
 #readseed-overlay .readseed-key-highlight {
   position: absolute;
@@ -56,8 +58,26 @@
   box-shadow: inset 0 -2px 0 oklch(0.72 0.16 82 / 0.55);
 }
 
-.readseed-annotation-space:is(p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6) {
-  line-height: calc(1em + 34px) !important;
+/*
+ * Temporary spacing on annotated blocks only. Every text line gets one label lane
+ * above it and, when glosses are on, one below it, so the gap between two lines
+ * holds both lanes without labels covering the original text. The classes are
+ * removed again when the overlay is cleared.
+ */
+.readseed-annotation-space {
+  --readseed-lane: 20px;
+  line-height: calc(1.35em + var(--readseed-lane) + 4px) !important;
+}
+
+.readseed-annotation-space.readseed-lanes-2 {
+  line-height: calc(1.35em + var(--readseed-lane) * 2 + 6px) !important;
+}
+
+.readseed-annotation-space.readseed-size-small { --readseed-lane: 18px; }
+.readseed-annotation-space.readseed-size-large { --readseed-lane: 23px; }
+
+.readseed-annotation-space :is(span, a, b, strong, i, em, u, mark, font, small, sup, sub) {
+  line-height: inherit !important;
 }
 
 .readseed-reading-highlight {
@@ -103,6 +123,26 @@
 
 #readseed-reading-controls button:hover { background: oklch(0.91 0.04 257); }
 #readseed-reading-controls span { min-width: 58px; text-align: center; }
+
+/* Top toolbar: an extension iframe pinned above the page, which is pushed down. */
+html.readseed-toolbar-open {
+  padding-top: 56px !important;
+  scroll-padding-top: 56px;
+}
+
+#readseed-toolbar-frame {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 2147483646 !important;
+  display: block !important;
+  width: 100vw !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color-scheme: light;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .readseed-reading-highlight { transition: none; }

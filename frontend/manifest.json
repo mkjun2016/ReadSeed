@@ -1,23 +1,32 @@
 {
   "manifest_version": 3,
   "name": "ReadSeed",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "발음·쉬운 뜻·핵심 정보·동시 읽기를 제공하는 한국어 읽기 보조 확장 프로그램",
   "action": {
-    "default_title": "ReadSeed",
-    "default_popup": "popup/popup.html"
+    "default_title": "ReadSeed 도구 막대 열기"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*"
   ],
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab", "scripting"],
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "js": ["assist.js", "content.js"],
       "css": ["overlay.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["toolbar/toolbar.html", "toolbar/toolbar.css", "toolbar/toolbar.js"],
+      "matches": ["http://*/*", "https://*/*"],
+      "use_dynamic_url": true
     }
   ]
 }

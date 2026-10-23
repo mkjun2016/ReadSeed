@@ -2,6 +2,7 @@ const API_URL = "http://127.0.0.1:8000/annotate";
 const HEALTH_URL = "http://127.0.0.1:8000/health";
 const MAX_SENTENCES = 20;
 const MAX_CONCURRENT_REQUESTS = 2;
+const RENDER_EVERY = 4;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SETTINGS_KEY = "readseedSettings";
 const EVALUATION_KEY = "readseedEvaluation";
@@ -19,26 +20,35 @@ const DEFAULT_SETTINGS = {
 const analyzeButton = document.querySelector("#analyze");
 const clearButton = document.querySelector("#clear");
 const status = document.querySelector("#status");
+const settingsPanel = document.querySelector("#settings");
+const settingsButton = document.querySelector("#toggleSettings");
 const settingIds = Object.keys(DEFAULT_SETTINGS);
 let settings = { ...DEFAULT_SETTINGS };
 let lastAnalysisSummary = null;
+let hostTab = null;
 
-function setStatus(message) { status.textContent = message; }
-
-async function activeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("현재 탭을 찾을 수 없습니다.");
-  return tab;
+function setStatus(message) {
+  status.textContent = message;
+  status.title = message;
 }
 
-async function sendToActiveTab(message, ignoreFailure = false) {
+async function currentTab() {
+  if (hostTab) return hostTab;
+  // The toolbar is an iframe inside the tab it controls, so getCurrent() is that tab.
+  hostTab = await chrome.tabs.getCurrent();
+  if (!hostTab) [hostTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!hostTab?.id) throw new Error("현재 탭을 찾을 수 없습니다.");
+  return hostTab;
+}
+
+async function sendToHost(message, ignoreFailure = false) {
   try {
-    const tab = await activeTab();
+    const tab = await currentTab();
     return await chrome.tabs.sendMessage(tab.id, message);
   } catch (error) {
     if (ignoreFailure) return null;
     const restricted = /Receiving end does not exist|Could not establish connection/.test(error.message);
-    throw new Error(restricted ? "이 페이지에서는 사용할 수 없습니다. 일반 웹페이지에서 다시 시도하세요." : error.message);
+    throw new Error(restricted ? "페이지와 연결이 끊어졌습니다. 페이지를 새로고침한 뒤 다시 시도하세요." : error.message);
   }
 }
 
@@ -89,13 +99,22 @@ async function annotateSentence(sentence) {
   } finally { clearTimeout(timeout); }
 }
 
-async function annotateWithLimit(sentences) {
+// Results are rendered progressively, but only as a contiguous prefix: words are
+// matched to the text in order, so a gap would shift later words onto earlier text.
+async function annotateWithLimit(sentences, onPrefix) {
   const results = new Array(sentences.length);
   let nextIndex = 0;
+  let prefix = 0;
+  let lastRendered = 0;
   async function worker() {
     while (nextIndex < sentences.length) {
       const index = nextIndex++;
       results[index] = await annotateSentence(sentences[index]);
+      while (prefix < results.length && results[prefix]) prefix += 1;
+      if (prefix - lastRendered >= RENDER_EVERY && prefix < results.length) {
+        lastRendered = prefix;
+        await onPrefix(results.slice(0, prefix));
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_REQUESTS, sentences.length) }, worker));
@@ -122,7 +141,7 @@ function writeSettingsToForm(value) {
 async function saveSettings() {
   settings = readSettingsFromForm();
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-  await sendToActiveTab({ type: "READSEED_UPDATE_SETTINGS", settings }, true);
+  await sendToHost({ type: "READSEED_UPDATE_SETTINGS", settings }, true);
 }
 
 async function loadSettings() {
@@ -131,24 +150,28 @@ async function loadSettings() {
   writeSettingsToForm(settings);
 }
 
-async function analyze() {
+async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
   analyzeButton.disabled = true;
-  setStatus(settings.selectionOnly ? "선택 영역을 확인하고 있습니다…" : "본문을 확인하고 있습니다…");
+  setStatus(selectionOnly ? "선택 영역을 확인하고 있습니다…" : "본문을 확인하고 있습니다…");
   const startedAt = performance.now();
   try {
-    await sendToActiveTab({ type: "READSEED_CLEAR_OVERLAY" }, true);
+    await sendToHost({ type: "READSEED_CLEAR_OVERLAY" }, true);
     await ensureApiAvailable();
-    const extracted = await sendToActiveTab({ type: "READSEED_EXTRACT_TARGET", selectionOnly: settings.selectionOnly });
-    if (!extracted?.ok) throw new Error(extracted?.error || "분석할 글을 찾지 못했습니다.");
+    const extracted = await sendToHost({ type: "READSEED_EXTRACT_TARGET", selectionOnly });
+    if (!extracted) throw new Error("페이지가 응답하지 않습니다. 확장 프로그램을 새로고침했다면 이 페이지도 새로고침해 주세요.");
+    if (!extracted.ok) throw new Error(extracted.error || "분석할 글을 찾지 못했습니다.");
 
     const allSentences = splitSentences(extracted.text);
     const sentences = allSentences.slice(0, MAX_SENTENCES);
     if (!sentences.length) throw new Error("분석할 문장을 찾지 못했습니다.");
     setStatus(`${sentences.length}개 문장을 분석하고 있습니다…`);
-    const results = await annotateWithLimit(sentences);
+    const results = await annotateWithLimit(sentences, async (partial) => {
+      setStatus(`${partial.length}/${sentences.length}개 문장 분석 중…`);
+      await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results: partial, settings: { ...settings, readingGuide: false } }, true);
+    });
     const succeeded = results.filter((item) => item.ok).length;
     const failed = results.length - succeeded;
-    const overlay = await sendToActiveTab({ type: "READSEED_RENDER_ASSISTANCE", results, settings });
+    const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings });
     if (!overlay?.ok) throw new Error(overlay?.error || "읽기 보조 정보를 표시하지 못했습니다.");
 
     lastAnalysisSummary = {
@@ -159,13 +182,24 @@ async function analyze() {
       pronunciation: overlay.pronunciation,
       gloss: overlay.gloss,
       keyInfo: overlay.keyInfo,
-      selectionOnly: settings.selectionOnly,
+      selectionOnly,
     };
-    const capped = allSentences.length > MAX_SENTENCES ? ` 처음 ${MAX_SENTENCES}개만 처리했습니다.` : "";
-    setStatus(`분석 완료: 발음 ${overlay.pronunciation}개 · 쉬운 뜻 ${overlay.gloss}개 · 핵심 정보 ${overlay.keyInfo}개.${failed ? ` ${failed}개 문장 실패.` : ""}${capped}`);
+    const capped = allSentences.length > MAX_SENTENCES ? ` 앞 ${MAX_SENTENCES}문장만 처리했습니다.` : "";
+    setStatus(`발음 ${overlay.pronunciation} · 쉬운 뜻 ${overlay.gloss} · 핵심 정보 ${overlay.keyInfo}${failed ? ` · ${failed}문장 실패` : ""}.${capped}`);
   } finally {
     analyzeButton.disabled = false;
   }
+}
+
+async function syncToolbarHeight() {
+  await sendToHost({ type: "READSEED_TOOLBAR_HEIGHT", height: document.body.scrollHeight }, true);
+}
+
+async function toggleSettings() {
+  const open = settingsPanel.hidden;
+  settingsPanel.hidden = !open;
+  settingsButton.setAttribute("aria-expanded", String(open));
+  await syncToolbarHeight();
 }
 
 async function loadEvaluation() {
@@ -213,6 +247,7 @@ async function finishEvaluation() {
   evaluation.active = null;
   await chrome.storage.local.set({ [EVALUATION_KEY]: evaluation });
   renderEvaluationSummary(evaluation);
+  setStatus("평가 기록을 저장했습니다.");
 }
 
 async function exportEvaluation() {
@@ -227,20 +262,31 @@ async function exportEvaluation() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-document.querySelectorAll("input, select").forEach((input) => {
-  if (!input.closest(".evaluation")) input.addEventListener("change", () => saveSettings().catch(console.error));
-});
-
-analyzeButton.addEventListener("click", () => analyze().catch((error) => {
+function reportError(error) {
   setStatus(error.message);
-  console.error("[ReadSeed] Analysis failed", error);
-}));
+  console.error("[ReadSeed]", error);
+}
+
+document.querySelectorAll("input, select").forEach((input) => {
+  if (!input.closest(".evaluation")) input.addEventListener("change", () => saveSettings().catch(reportError));
+});
+analyzeButton.addEventListener("click", () => analyze().catch(reportError));
 clearButton.addEventListener("click", async () => {
-  await sendToActiveTab({ type: "READSEED_CLEAR_OVERLAY" }, true);
+  await sendToHost({ type: "READSEED_CLEAR_OVERLAY" }, true);
   setStatus("읽기 보조 표시를 지웠습니다.");
 });
-document.querySelector("#evaluationStart").addEventListener("click", () => startEvaluation().catch((error) => setStatus(error.message)));
-document.querySelector("#evaluationFinish").addEventListener("click", () => finishEvaluation().catch((error) => setStatus(error.message)));
-document.querySelector("#evaluationExport").addEventListener("click", () => exportEvaluation().catch((error) => setStatus(error.message)));
+settingsButton.addEventListener("click", () => toggleSettings().catch(reportError));
+document.querySelector("#closeToolbar").addEventListener("click", () => sendToHost({ type: "READSEED_CLOSE_TOOLBAR" }, true));
+document.querySelector(".evaluation-panel").addEventListener("toggle", () => syncToolbarHeight());
+document.querySelector("#evaluationStart").addEventListener("click", () => startEvaluation().catch(reportError));
+document.querySelector("#evaluationFinish").addEventListener("click", () => finishEvaluation().catch(reportError));
+document.querySelector("#evaluationExport").addEventListener("click", () => exportEvaluation().catch(reportError));
 
-Promise.all([loadSettings(), loadEvaluation()]).catch((error) => setStatus(error.message));
+(async () => {
+  try {
+    await Promise.all([loadSettings(), loadEvaluation()]);
+    setStatus("본문을 분석하거나 드래그한 부분만 분석할 수 있습니다.");
+  } catch (error) {
+    reportError(error);
+  }
+})();
