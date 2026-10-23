@@ -17,7 +17,7 @@
   const TOOLBAR_OPEN_CLASS = "readseed-toolbar-open";
 
   const assist = create();
-  const toolbar = { frame: null };
+  const toolbar = { frame: null, border: null };
 
   function textFrom(element) {
     if (!element.querySelector(EXCLUDED_SELECTORS)) return normalizeText(element.innerText || "");
@@ -95,15 +95,22 @@
     frame.title = "ReadSeed 읽기 도구";
     frame.src = chrome.runtime.getURL("toolbar/toolbar.html");
     frame.style.height = `${TOOLBAR_HEIGHT}px`;
-    document.documentElement.append(frame);
+    // A frame around the whole viewport makes it obvious that ReadSeed is active.
+    const border = document.createElement("div");
+    border.id = "readseed-active-border";
+    border.setAttribute("aria-hidden", "true");
+    document.documentElement.append(border, frame);
     document.documentElement.classList.add(TOOLBAR_OPEN_CLASS);
     toolbar.frame = frame;
+    toolbar.border = border;
     assist.scheduleOverlayPositionUpdate();
   }
 
   function closeToolbar() {
     toolbar.frame?.remove();
+    toolbar.border?.remove();
     toolbar.frame = null;
+    toolbar.border = null;
     document.documentElement.classList.remove(TOOLBAR_OPEN_CLASS);
     assist.scheduleOverlayPositionUpdate();
   }
