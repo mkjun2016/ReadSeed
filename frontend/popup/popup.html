@@ -5,18 +5,95 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ReadSeed</title>
     <style>
-      body { width: 240px; margin: 0; padding: 18px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; color: #173b2a; }
-      h1 { margin: 0 0 14px; font-size: 20px; }
-      button { width: 100%; border: 0; border-radius: 8px; padding: 10px 12px; background: #2c6e49; color: white; font: inherit; font-weight: 700; cursor: pointer; }
-      button:hover { background: #215838; }
-      button:disabled { opacity: 0.65; cursor: wait; }
-      #status { min-height: 18px; margin: 10px 0 0; color: #52635a; font-size: 12px; line-height: 1.4; }
+      :root { color-scheme: light; font-family: Inter, "Noto Sans KR", system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { width: 330px; max-height: 600px; margin: 0; overflow-y: auto; background: #fbfcfb; color: #21382e; }
+      header { padding: 16px 16px 10px; }
+      h1 { margin: 0; font-size: 21px; letter-spacing: -0.03em; }
+      .subtitle { margin: 4px 0 0; color: #68786f; font-size: 12px; }
+      main { display: grid; gap: 10px; padding: 0 16px 16px; }
+      .panel { padding: 12px; border: 1px solid #dfe8e2; border-radius: 12px; background: white; }
+      .panel h2 { margin: 0 0 9px; font-size: 13px; }
+      .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+      label { font-size: 12px; }
+      .check { display: flex; align-items: center; gap: 6px; }
+      input[type="checkbox"] { accent-color: #2c6e49; }
+      .select-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+      .field { display: grid; gap: 4px; color: #586960; }
+      select, input[type="number"] { width: 100%; padding: 7px; border: 1px solid #ccd9d1; border-radius: 8px; background: #fff; color: #21382e; font: inherit; }
+      .actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+      button { border: 0; border-radius: 9px; padding: 10px 12px; background: #2c6e49; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+      button.secondary { background: #e8f1eb; color: #285c40; }
+      button.ghost { padding: 7px 9px; background: #f0f3f1; color: #52635a; }
+      button:hover { filter: brightness(0.95); }
+      button:disabled { opacity: 0.58; cursor: wait; }
+      #status { min-height: 18px; margin: 0; color: #52635a; font-size: 12px; line-height: 1.45; }
+      details summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+      .evaluation { display: grid; gap: 8px; margin-top: 10px; }
+      .evaluation-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .score-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      #evaluationSummary { margin: 0; color: #68786f; font-size: 11px; line-height: 1.4; }
     </style>
   </head>
   <body>
-    <h1>ReadSeed</h1>
-    <button id="analyze" type="button">분석하기</button>
-    <p id="status" role="status"></p>
+    <header>
+      <h1>ReadSeed</h1>
+      <p class="subtitle">원문은 그대로, 필요한 도움만 곁에</p>
+    </header>
+    <main>
+      <section class="panel" aria-labelledby="features-heading">
+        <h2 id="features-heading">표시할 읽기 도움</h2>
+        <div class="checks">
+          <label class="check"><input id="pronunciation" type="checkbox" /> 발음 주석</label>
+          <label class="check"><input id="gloss" type="checkbox" /> 쉬운 말 풀이</label>
+          <label class="check"><input id="keyInfo" type="checkbox" /> 핵심 정보</label>
+          <label class="check"><input id="readingGuide" type="checkbox" /> 동시 읽기</label>
+          <label class="check"><input id="selectionOnly" type="checkbox" /> 선택 영역만</label>
+        </div>
+        <div class="select-row">
+          <label class="field">주석 크기
+            <select id="annotationSize">
+              <option value="small">작게</option><option value="medium">보통</option><option value="large">크게</option>
+            </select>
+          </label>
+          <label class="field">주석 밀도
+            <select id="density">
+              <option value="low">낮게</option><option value="medium">보통</option><option value="high">높게</option>
+            </select>
+          </label>
+          <label class="field">읽기 속도
+            <select id="readingSpeed">
+              <option value="slow">천천히</option><option value="normal">보통</option><option value="fast">빠르게</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="analyze" type="button">분석하고 표시하기</button>
+        <button id="clear" class="secondary" type="button">지우기</button>
+      </div>
+      <p id="status" role="status"></p>
+
+      <details class="panel">
+        <summary>실사용 평가 기록</summary>
+        <div class="evaluation">
+          <label class="field">조건
+            <select id="evaluationCondition"><option value="baseline">보조 기능 없이</option><option value="readseed">ReadSeed 사용</option></select>
+          </label>
+          <div class="evaluation-row">
+            <button id="evaluationStart" class="ghost" type="button">측정 시작</button>
+            <button id="evaluationFinish" class="ghost" type="button">측정 완료</button>
+          </div>
+          <div class="score-row">
+            <label class="field">정답 수<input id="scoreCorrect" type="number" min="0" value="0" /></label>
+            <label class="field">문항 수<input id="scoreTotal" type="number" min="0" value="0" /></label>
+          </div>
+          <button id="evaluationExport" class="ghost" type="button">평가 결과 내보내기</button>
+          <p id="evaluationSummary"></p>
+        </div>
+      </details>
+    </main>
     <script src="popup.js"></script>
   </body>
 </html>

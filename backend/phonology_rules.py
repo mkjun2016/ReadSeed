@@ -74,14 +74,26 @@ RULE_TO_CATEGORY = {
     "20": "유음화",
     "23": "경음화", "24": "경음화", "25": "경음화",
     "26": "경음화", "27": "경음화", "28": "경음화", "30": "경음화",
+    "29": "ㄴ첨가",
     "idiom": "어휘적예외",  # g2pkk/idioms.txt에 박힌 개별 단어 예외 (예: 물엿->물렫)
+}
+
+# 고립 어절 분석에서 g2pkk가 형태소 경계를 놓치는 표준 발음만 최소한으로
+# 보정한다. 항목을 추가할 때는 국립국어원 근거와 회귀 테스트를 함께 둔다.
+_PRONUNCIATION_OVERRIDES = {
+    "밭일": {
+        "발음": "반닐",
+        "유형": "ㄴ첨가",
+        "유형전체": ["ㄴ첨가", "비음화"],
+        "조항": ["29", "18"],
+    },
 }
 
 # 여러 조항이 동시에 발동했을 때 대표 유형 하나를 고를 우선순위
 # (표기와 소리의 '질'이 바뀌는 변동을 상대적 위치 이동뿐인 변동보다 우선)
 _CATEGORY_PRIORITY = [
     "구개음화", "격음화", "경음화", "유음화", "비음화",
-    "어휘적예외", "ㅎ탈락", "연음", "받침대표음화", "모음변화",
+    "ㄴ첨가", "어휘적예외", "ㅎ탈락", "연음", "받침대표음화", "모음변화",
 ]
 
 
@@ -127,6 +139,32 @@ def classify(word: str, g2p: G2p) -> dict:
     경우다 (미구현 예외 케이스일 가능성) - 이때는 유형을 "미확인"으로 남기고
     섣불리 라벨을 붙이지 않는다 (CLAUDE.md: 오탐 > 미탐 원칙).
     """
+    override_entry = next(
+        (
+            (base, override)
+            for base, override in sorted(
+                _PRONUNCIATION_OVERRIDES.items(),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            )
+            if word.startswith(base)
+        ),
+        None,
+    )
+    if override_entry:
+        base, override = override_entry
+        suffix = word[len(base):]
+        pronunciation = override["발음"] if not suffix else g2p(override["발음"] + suffix)
+        return {
+            "표기": word,
+            "발음": pronunciation,
+            "다름": word != pronunciation,
+            "유형": override["유형"],
+            "유형전체": list(override["유형전체"]),
+            "조항": list(override["조항"]),
+            "신뢰": True,
+        }
+
     real_pron = g2p(word)
     traced_pron, fired = _trace(word, g2p)
     reliable = traced_pron == real_pron

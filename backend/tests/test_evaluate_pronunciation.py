@@ -51,8 +51,9 @@ class EvaluatePronunciationTest(unittest.TestCase):
     def test_current_classifier_keeps_precision_target(self):
         result = evaluate(load_cases(), build_default_predictor())
 
-        self.assertEqual(result["total"], 39)
+        self.assertEqual(result["total"], 49)
         self.assertGreaterEqual(result["precision"], 0.95)
+        self.assertEqual(result["failures"], [])
 
     @staticmethod
     def case(case_id, surface, expected):

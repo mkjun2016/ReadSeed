@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ReadSeed",
-  "version": "0.1.0",
-  "description": "웹페이지 본문을 추출하는 읽기 보조 확장 프로그램",
+  "version": "0.2.0",
+  "description": "발음·쉬운 뜻·핵심 정보·동시 읽기를 제공하는 한국어 읽기 보조 확장 프로그램",
   "action": {
     "default_title": "ReadSeed",
     "default_popup": "popup/popup.html"
@@ -11,6 +11,7 @@
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*"
   ],
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
