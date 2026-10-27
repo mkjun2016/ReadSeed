@@ -237,12 +237,24 @@
       for (const index of [...new Set(keySentenceIndexes)].sort((a, b) => a - b)) {
         const sentence = results[index]?.sentence;
         if (!sentence) continue;
-        const start = text.indexOf(sentence, cursor);
-        if (start < 0) continue;
-        const range = rangeForText(nodes, start, start + sentence.length);
+        const match = findSentence(text, sentence, cursor);
+        if (!match) continue;
+        const range = rangeForText(nodes, match.start, match.end);
         if (range) state.keyEntries.push({ range, boxes: [] });
-        cursor = start + sentence.length;
+        cursor = match.end;
       }
+    }
+
+    // Sentences are split from rendered text, where a line break may have become a
+    // space (PDF lines, <br>), while the text nodes may hold no space there at all.
+    function findSentence(text, sentence, from) {
+      const exact = text.indexOf(sentence, from);
+      if (exact >= 0) return { start: exact, end: exact + sentence.length };
+      const escaped = sentence.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      const pattern = new RegExp(escaped.join("\\s*"), "g");
+      pattern.lastIndex = from;
+      const match = pattern.exec(text);
+      return match ? { start: match.index, end: match.index + match[0].length } : null;
     }
 
     function glossText(word, gloss) {
@@ -301,6 +313,7 @@
       };
       const viewportHeight = win.innerHeight;
       const textRects = fixedLayout ? visibleTextRects() : [];
+      const placedBoxes = [];
       // In a fixed layout a hint that has no room still marks its word for tapping.
       const collapse = (entry, rect) => {
         entry.label.style.display = "none";
@@ -340,12 +353,16 @@
           continue;
         }
         if (fixedLayout) {
+          // Without reserved spacing, a gloss below one line can meet a pronunciation
+          // above the next, so labels are checked against every placed box too.
           const height = entry.label.offsetHeight;
           const top = entry.kind === "below" ? anchor : anchor - height;
-          if (overlapsText({ left, right: left + width, top, bottom: top + height }, rect, textRects)) {
+          const box = { left, right: left + width, top, bottom: top + height };
+          if (overlapsText(box, rect, textRects) || overlapsText(box, rect, placedBoxes)) {
             collapse(entry, rect);
             continue;
           }
+          placedBoxes.push(box);
         }
 
         lane.spans.push({ left, right: left + width });
@@ -515,7 +532,11 @@
             return { ok: false, error: "읽기 보조 정보를 표시하지 못했습니다." };
           }
         case "READSEED_UPDATE_SETTINGS":
-          return { ok: true, ...renderAssistance(state.lastResults, message.settings || {}) };
+          // A settings change re-renders the last analysis; keep the key sentences
+          // chosen for it, which the toolbar only sends with a fresh analysis.
+          return { ok: true, ...renderAssistance(state.lastResults, {
+            keySentenceIndexes: state.settings.keySentenceIndexes, ...(message.settings || {}),
+          }) };
         case "READSEED_START_READING":
           return startReadingGuide();
         case "READSEED_STOP_READING":
