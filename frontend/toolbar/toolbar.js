@@ -42,8 +42,20 @@ async function currentTab() {
   return hostTab;
 }
 
+// ReadSeed's own pages (the PDF viewer) embed this toolbar same-origin and expose
+// a host object; reading it from a web page parent throws, which means "use the tab".
+function extensionHost() {
+  try {
+    return window.parent !== window ? window.parent.ReadSeedHost || null : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function sendToHost(message, ignoreFailure = false) {
   try {
+    const host = extensionHost();
+    if (host) return await host.handle(message);
     const tab = await currentTab();
     return await chrome.tabs.sendMessage(tab.id, message);
   } catch (error) {

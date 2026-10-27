@@ -1,0 +1,2 @@
+pdfjs-dist 4.10.38 (Apache-2.0) — https://github.com/mozilla/pdf.js
+Copied: build/pdf.min.mjs, build/pdf.worker.min.mjs, cmaps/, standard_fonts/, LICENSE

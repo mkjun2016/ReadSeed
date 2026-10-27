@@ -101,11 +101,15 @@
     assist.scheduleOverlayPositionUpdate();
   }
 
+  // Closing turns ReadSeed off entirely: annotations, highlights, reading guide and
+  // the temporary spacing classes all go, leaving the page as it was before.
   function closeToolbar() {
+    assist.clearOverlay();
     toolbar.frame?.remove();
     toolbar.frame = null;
-    document.documentElement.classList.remove(TOOLBAR_OPEN_CLASS);
-    assist.scheduleOverlayPositionUpdate();
+    const root = document.documentElement;
+    root.classList.remove(TOOLBAR_OPEN_CLASS);
+    if (!root.classList.length) root.removeAttribute("class");
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

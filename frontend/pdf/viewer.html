@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReadSeed PDF</title>
+    <link rel="stylesheet" href="../overlay.css" />
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <iframe id="readseed-toolbar-frame" title="ReadSeed 읽기 도구" src="../toolbar/toolbar.html"></iframe>
+    <header class="file-bar">
+      <span id="file-name" class="file-name">PDF</span>
+      <span id="page-count" class="page-count"></span>
+      <label class="open-file">다른 PDF 열기<input id="file-input" type="file" accept="application/pdf,.pdf" /></label>
+    </header>
+    <main id="pages" class="pages" aria-label="PDF 페이지"></main>
+    <section id="notice" class="notice" hidden>
+      <p id="notice-text"></p>
+      <div class="notice-actions">
+        <button id="grant" type="button" hidden>이 PDF 읽기 허용</button>
+        <label class="open-file primary">PDF 파일 선택<input id="notice-file" type="file" accept="application/pdf,.pdf" /></label>
+      </div>
+      <p class="notice-hint">PDF를 이 화면으로 끌어다 놓아도 됩니다.</p>
+    </section>
+    <div id="word-card" class="word-card" role="dialog" aria-live="polite" hidden></div>
+    <script src="../assist.js"></script>
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>

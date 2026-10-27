@@ -24,7 +24,17 @@
     return text.replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  function create({ document: doc = document, excludedSelector = EXCLUDED_SELECTORS } = {}) {
+  // `fixedLayout` is for documents whose text cannot reflow, such as PDF pages: no
+  // spacing classes are added, `blockSelector` picks the element that bounds labels,
+  // and labels that would cover text matched by `textSelector` collapse into a
+  // dotted marker under the word instead.
+  function create({
+    document: doc = document,
+    excludedSelector = EXCLUDED_SELECTORS,
+    fixedLayout = false,
+    blockSelector = null,
+    textSelector = null,
+  } = {}) {
     const win = doc.defaultView;
     const state = {
       root: null, entries: [], keyEntries: [], contentRoot: null, targetRange: null,
@@ -145,6 +155,7 @@
     function annotationBlock(range) {
       const root = state.contentRoot;
       let element = range.startContainer.parentElement;
+      if (blockSelector) return element?.closest(blockSelector) || root;
       const semantic = element?.closest(BLOCK_SELECTOR);
       if (semantic && root?.contains(semantic)) return semantic;
       while (element && root?.contains(element)) {
@@ -167,7 +178,7 @@
       block.classList.add(...laneClasses());
     }
 
-    function createLabel(kind, text, range) {
+    function createLabel(kind, text, range, word) {
       const block = annotationBlock(range);
       if (!block) return false;
       const label = doc.createElement("span");
@@ -175,9 +186,49 @@
       label.dataset.position = kind;
       label.textContent = text;
       state.root.append(label);
-      state.entries.push({ range, label, kind, block, width: 0 });
-      reserveSpace(block);
+      state.entries.push({ range, label, kind, block, word, text, width: 0, marker: null });
+      if (!fixedLayout) reserveSpace(block);
       return true;
+    }
+
+    function visibleTextRects() {
+      if (!textSelector) return [];
+      const height = win.innerHeight;
+      return Array.from(doc.querySelectorAll(textSelector), (element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width && rect.height && rect.bottom > -40 && rect.top < height + 40);
+    }
+
+    function overlapsText(box, wordRect, textRects) {
+      return textRects.some((rect) => {
+        const isWord = rect.left < wordRect.right && rect.right > wordRect.left && rect.top < wordRect.bottom && rect.bottom > wordRect.top;
+        return !isWord && box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top;
+      });
+    }
+
+    function showMarker(entry, rect) {
+      if (!entry.marker) {
+        entry.marker = doc.createElement("span");
+        entry.marker.className = "readseed-marker";
+        state.root.append(entry.marker);
+      }
+      Object.assign(entry.marker.style, {
+        display: "block", left: `${rect.left}px`, top: `${rect.bottom - 1}px`, width: `${rect.width}px`,
+      });
+    }
+
+    // Everything ReadSeed knows about the annotated word under a point, so a host
+    // can show it on demand (used by the PDF viewer's tap card).
+    function wordAt(x, y) {
+      const hits = state.entries.filter((entry) => Array.from(entry.range.getClientRects())
+        .some((rect) => x >= rect.left - 2 && x <= rect.right + 2 && y >= rect.top - 2 && y <= rect.bottom + 2));
+      if (!hits.length) return null;
+      const rect = Array.from(hits[0].range.getClientRects()).find((item) => item.width && item.height);
+      return {
+        rect,
+        surface: hits[0].word?.표기 || hits[0].range.toString(),
+        pronunciation: hits.find((entry) => entry.kind === "above")?.word?.발음 || null,
+        gloss: hits.find((entry) => entry.kind === "below")?.text || null,
+      };
     }
 
     function renderKeyHighlights(nodes, text, results, keySentenceIndexes = []) {
@@ -220,10 +271,10 @@
       located.forEach(({ word, range }, index) => {
         if (!densityAllows(index, state.settings.density)) return;
         if (state.settings.pronunciation && word.다름 && word.신뢰 && word.발음) {
-          createLabel("above", `[${word.발음}]`, range);
+          createLabel("above", `[${word.발음}]`, range, word);
         }
         const firstGloss = Array.isArray(word.뜻풀이후보) ? word.뜻풀이후보[0] : null;
-        if (state.settings.gloss && firstGloss?.뜻풀이) createLabel("below", glossText(word, firstGloss), range);
+        if (state.settings.gloss && firstGloss?.뜻풀이) createLabel("below", glossText(word, firstGloss), range, word);
       });
       renderKeyHighlights(nodes, text, results, state.settings.keySentenceIndexes);
       // Measure label positions only after the spacing classes have reflowed the text.
@@ -249,9 +300,16 @@
         return lane;
       };
       const viewportHeight = win.innerHeight;
+      const textRects = fixedLayout ? visibleTextRects() : [];
+      // In a fixed layout a hint that has no room still marks its word for tapping.
+      const collapse = (entry, rect) => {
+        entry.label.style.display = "none";
+        if (fixedLayout) showMarker(entry, rect);
+      };
 
       for (const entry of state.entries) {
         entry.label.dataset.visible = "false";
+        if (entry.marker) entry.marker.style.display = "none";
         const rect = Array.from(entry.range.getClientRects()).find((item) => item.width && item.height);
         if (!rect || rect.bottom < -80 || rect.top > viewportHeight + 80) continue;
 
@@ -278,8 +336,16 @@
         // A label pushed past its own word or out of the text column no longer
         // reads as belonging to that word.
         if (left > rect.right || left + width > maxRight) {
-          entry.label.style.display = "none";
+          collapse(entry, rect);
           continue;
+        }
+        if (fixedLayout) {
+          const height = entry.label.offsetHeight;
+          const top = entry.kind === "below" ? anchor : anchor - height;
+          if (overlapsText({ left, right: left + width, top, bottom: top + height }, rect, textRects)) {
+            collapse(entry, rect);
+            continue;
+          }
         }
 
         lane.spans.push({ left, right: left + width });
@@ -293,7 +359,7 @@
 
       for (const entry of state.keyEntries) {
         entry.boxes.forEach((box) => box.remove());
-        entry.boxes = Array.from(entry.range.getClientRects()).filter((rect) => rect.width && rect.height).map((rect) => {
+        entry.boxes = mergeLineRects(entry.range.getClientRects()).map((rect) => {
           const box = doc.createElement("span");
           box.className = "readseed-key-highlight";
           Object.assign(box.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
@@ -302,6 +368,23 @@
         });
       }
       updateReadingHighlight();
+    }
+
+    // PDF text layers often hold one glyph per element, so a phrase yields many
+    // touching rects. Join neighbours on the same line into one highlight box.
+    function mergeLineRects(rectList) {
+      const merged = [];
+      for (const rect of Array.from(rectList).filter((item) => item.width && item.height)) {
+        const last = merged[merged.length - 1];
+        if (last && Math.abs(last.top - rect.top) < 3 && rect.left - last.right < rect.height * 0.6 && rect.right >= last.left) {
+          last.right = Math.max(last.right, rect.right);
+          last.top = Math.min(last.top, rect.top);
+          last.bottom = Math.max(last.bottom, rect.bottom);
+        } else {
+          merged.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+        }
+      }
+      return merged.map((rect) => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top }));
     }
 
     function summary() {
@@ -443,7 +526,7 @@
       }
     }
 
-    return { setTarget, clearOverlay, renderAssistance, handleMessage, scheduleOverlayPositionUpdate };
+    return { setTarget, clearOverlay, renderAssistance, handleMessage, scheduleOverlayPositionUpdate, wordAt };
   }
 
   globalThis.ReadSeedAssist = { create, normalizeText, EXCLUDED_SELECTORS, BLOCK_SELECTOR, DEFAULT_SETTINGS };
