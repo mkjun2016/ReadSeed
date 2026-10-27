@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .DS_Store
 NIKL_MP_2025_v1.0/
+backend/data/dict/
+backend/data/gloss_decisions.sqlite3
+backend/data/key_sentence_decisions.sqlite3

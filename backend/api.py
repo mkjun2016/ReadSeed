@@ -16,6 +16,10 @@ class AnnotateRequest(BaseModel):
     sentence: str = Field(..., min_length=1, description="분석할 문장")
 
 
+class KeyInfoRequest(BaseModel):
+    sentences: list[str] = Field(..., min_length=1, max_length=20, description="핵심 문장을 고를 문장 목록")
+
+
 app = FastAPI(title="ReadSeed API", version="1.0.0")
 
 # The extension may run from a chrome-extension:// origin. Credentials are not
@@ -58,6 +62,14 @@ def annotate(request: AnnotateRequest) -> list[dict[str, Any]]:
     except Exception as exc:
         # Keep the process alive for unexpected per-request failures.
         raise HTTPException(status_code=500, detail="annotation failed") from exc
+
+
+@app.post("/key-info")
+def key_info(request: KeyInfoRequest) -> dict[str, list[int]]:
+    """글 전체에서 핵심 문장 번호만 선택한다. 실패는 안전하게 빈 목록이다."""
+    from key_info_selector import select
+
+    return {"indices": select(request.sentences)}
 
 
 if __name__ == "__main__":

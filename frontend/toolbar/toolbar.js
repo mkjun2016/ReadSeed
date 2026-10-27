@@ -1,5 +1,6 @@
 const API_URL = "http://127.0.0.1:8000/annotate";
 const HEALTH_URL = "http://127.0.0.1:8000/health";
+const KEY_INFO_URL = "http://127.0.0.1:8000/key-info";
 const MAX_SENTENCES = 20;
 const MAX_CONCURRENT_REQUESTS = 2;
 const RENDER_EVERY = 4;
@@ -99,6 +100,23 @@ async function annotateSentence(sentence) {
   } finally { clearTimeout(timeout); }
 }
 
+async function selectKeySentences(sentences) {
+  if (!settings.keyInfo) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(KEY_INFO_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentences }), signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && Array.isArray(payload?.indices) ? payload.indices : [];
+  } catch (_error) {
+    // 핵심 정보 실패가 발음·풀이 분석 전체를 막지 않게 한다.
+    return [];
+  } finally { clearTimeout(timeout); }
+}
+
 // Results are rendered progressively, but only as a contiguous prefix: words are
 // matched to the text in order, so a gap would shift later words onto earlier text.
 async function annotateWithLimit(sentences, onPrefix) {
@@ -171,7 +189,8 @@ async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
     });
     const succeeded = results.filter((item) => item.ok).length;
     const failed = results.length - succeeded;
-    const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings });
+    const keySentenceIndexes = await selectKeySentences(sentences);
+    const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings: { ...settings, keySentenceIndexes } });
     if (!overlay?.ok) throw new Error(overlay?.error || "읽기 보조 정보를 표시하지 못했습니다.");
 
     lastAnalysisSummary = {

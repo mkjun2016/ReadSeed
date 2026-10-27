@@ -6,9 +6,6 @@ ReadSeed - 백엔드 파이프라인 통합
       이 인터페이스가 프론트엔드가 소비할 데이터 모양이자, 다음 단계(LLM의 문맥 보정·
       단어 선별·쉬운말풀이 다듬기)가 채워 넣을 자리다.
 
-LLM 연동 전까지: 사전 조회 결과는 후보로만 붙이고 "선택"은 하지 않는다
-(CLAUDE.md 역할분리: 읽기 부담 단어 선별·동형이의어 보정은 LLM 몫).
-
 사전 조회는 어절이 아니라 형태소 표제어 단위로 한다 (CLAUDE.md "통합 키: 표제어+품사").
 예: "수급자에"를 통째로 조회하면 안 되고, 형태소 분석으로 뽑은 "수급자"로 조회해야 한다.
 
@@ -22,33 +19,35 @@ from g2pkk import G2p
 from kiwipiepy import Kiwi
 
 import dict_lookup
+import gloss_selector
 import phonology_rules
-import urimalsam_lookup
 
 g2p = G2p()
 kiwi = Kiwi()
 
-_CONTENT_TAGS = {"NNG", "NNP", "XR"}  # 쉬운말풀이 후보를 찾을 형태소 품사 (한자어·행정용어는 대개 명사류)
-_gloss_cache: dict[str, list[dict]] = {}
+_CONTENT_TAGS = {"NNG", "XR"}  # NNP(고유명사)는 프로젝트 원칙상 풀이를 붙이지 않는다.
+_gloss_cache: dict[tuple[str, str, str], list[dict]] = {}
 
 
-def _lookup_gloss(word: str) -> list[dict]:
-    """표제어로 뜻풀이 후보를 찾는다. 한국어기초사전 우선, 없으면 우리말샘. 동형이의어는
-    거르지 않고 후보 그대로 반환한다 (선별은 LLM 몫)."""
-    if word in _gloss_cache:
-        return _gloss_cache[word]
+def _format_gloss(selected: gloss_selector.Selection) -> list[dict]:
+    if not selected.candidate:
+        return []
+    entry = selected.candidate
+    return [{"출처": "한국어기초사전", "표제어": entry["표제어"], "품사": entry["품사"], "뜻풀이": entry["뜻풀이"]}]
 
-    entries = dict_lookup.lookup(word)
-    source = "한국어기초사전"
-    if not entries:
-        entries = urimalsam_lookup.search(word)
-        source = "우리말샘"
 
-    result = [
-        {"출처": source, "표제어": e["표제어"], "품사": e["품사"], "뜻풀이": e["뜻풀이"]}
-        for e in entries[:3]
-    ]
-    _gloss_cache[word] = result
+def _lookup_gloss(sentence: str, word: str, tag: str) -> list[dict]:
+    """문맥에서 적절한 로컬 기초사전 뜻 하나만 반환한다.
+
+    원격 보조 사전은 발음/직접 조회용으로 남기되, 오답 주석을 막기 위해 Overlay에는
+    사용하지 않는다. LLM 미설정 시 다의어는 표시하지 않는다.
+    """
+    key = (sentence, word, tag)
+    if key in _gloss_cache:
+        return _gloss_cache[key]
+
+    result = _format_gloss(gloss_selector.select(sentence, word, tag, dict_lookup.lookup(word)))
+    _gloss_cache[key] = result
     return result
 
 
@@ -86,6 +85,7 @@ def annotate_sentence(sentence: str) -> list[dict]:
                 break
 
     results = []
+    sentence_gloss_inputs: list[tuple[int, str, str, list[dict]]] = []
     for (start, end), morphs in zip(spans, morphs_by_word):
         eojeol = sentence[start:end]
         clean = re.sub(r"[^가-힣]", "", eojeol)
@@ -96,12 +96,6 @@ def annotate_sentence(sentence: str) -> list[dict]:
         # 전체를 넣으면 다른 어절로 규칙이 새어나간다)
         p = phonology_rules.classify(clean, g2p)
 
-        # 뜻풀이는 문장 전체 문맥으로 분석된 형태소(표제어) 단위로
-        gloss_candidates = []
-        for form, tag in morphs:
-            if tag in _CONTENT_TAGS:
-                gloss_candidates.extend(_lookup_gloss(form))
-
         results.append(
             {
                 "어절": eojeol,
@@ -111,9 +105,22 @@ def annotate_sentence(sentence: str) -> list[dict]:
                 "유형": p["유형"],
                 "신뢰": p["신뢰"],
                 "형태소": morphs,
-                "뜻풀이후보": gloss_candidates,
+                "뜻풀이후보": [],
             }
         )
+        result_index = len(results) - 1
+        for form, tag in morphs:
+            if tag in _CONTENT_TAGS:
+                sentence_gloss_inputs.append((result_index, form, tag, dict_lookup.lookup(form)))
+
+    # LLM은 어절마다 호출하지 않는다. 문장 전체 후보를 한 번에 선택해 비용·지연을
+    # 제한하고, 결과만 원래 어절 위치에 돌려놓는다.
+    selections = gloss_selector.select_many(
+        sentence,
+        [(word, tag, entries) for _, word, tag, entries in sentence_gloss_inputs],
+    )
+    for (result_index, _, _, _), selected in zip(sentence_gloss_inputs, selections):
+        results[result_index]["뜻풀이후보"].extend(_format_gloss(selected))
     return results
 
 

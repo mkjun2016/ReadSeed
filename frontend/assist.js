@@ -13,13 +13,6 @@
   ].join(",");
   const BLOCK_SELECTOR = "p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6";
   const SPACE_CLASS = "readseed-annotation-space";
-  const KEY_PATTERNS = [
-    /\d[\d,]*(?:\.\d+)?\s*(?:조원|억원|만원|원)/g,
-    /\d[\d,]*(?:\.\d+)?\s*%/g,
-    /\d{4}[.\-/년]\s*\d{1,2}[.\-/월]\s*\d{1,2}일?/g,
-    /\d{1,2}월\s*\d{1,2}일/g,
-    /(?:신청|접수|제출|마감|기한|기간|대상|자격|필수|주의|금지)(?:\s*[가-힣]{0,8})?/g,
-  ];
   const DEFAULT_SETTINGS = {
     pronunciation: true, gloss: true, keyInfo: true, readingGuide: false,
     annotationSize: "medium", density: "medium", readingSpeed: "normal",
@@ -187,20 +180,17 @@
       return true;
     }
 
-    function renderKeyHighlights(nodes, text) {
+    function renderKeyHighlights(nodes, text, results, keySentenceIndexes = []) {
       if (!state.settings.keyInfo) return;
-      const seen = new Set();
-      for (const pattern of KEY_PATTERNS) {
-        pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(text))) {
-          const key = `${match.index}:${match[0].length}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const range = rangeForText(nodes, match.index, match.index + match[0].length);
-          if (range) state.keyEntries.push({ range, boxes: [] });
-          if (seen.size >= 24) return;
-        }
+      let cursor = 0;
+      for (const index of [...new Set(keySentenceIndexes)].sort((a, b) => a - b)) {
+        const sentence = results[index]?.sentence;
+        if (!sentence) continue;
+        const start = text.indexOf(sentence, cursor);
+        if (start < 0) continue;
+        const range = rangeForText(nodes, start, start + sentence.length);
+        if (range) state.keyEntries.push({ range, boxes: [] });
+        cursor = start + sentence.length;
       }
     }
 
@@ -235,7 +225,7 @@
         const firstGloss = Array.isArray(word.뜻풀이후보) ? word.뜻풀이후보[0] : null;
         if (state.settings.gloss && firstGloss?.뜻풀이) createLabel("below", glossText(word, firstGloss), range);
       });
-      renderKeyHighlights(nodes, text);
+      renderKeyHighlights(nodes, text, results, state.settings.keySentenceIndexes);
       // Measure label positions only after the spacing classes have reflowed the text.
       updateOverlayPositions();
       if (state.settings.readingGuide) startReadingGuide();

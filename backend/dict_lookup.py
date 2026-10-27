@@ -1,8 +1,9 @@
 """
-ReadSeed - 한국어기초사전(국립국어원) Open API 로더
+ReadSeed - 한국어기초사전 로컬 SQLite 조회기
 
-목적: 표제어를 조회해 발음/뜻풀이를 가져오는 최소 동작 스크립트.
-      "쉬운 말 풀이"(claude.md 기능 목록) + G2P 보정용 표준 발음 참고 데이터 확보 단계.
+목적: 표제어를 조회해 발음/뜻풀이를 가져온다. 기본 경로는 내려받은
+      한국어기초사전 JSON에서 만든 로컬 SQLite이며, Open API는 로컬에
+      없는 항목의 보조 경로로만 사용한다.
 
 API: 한국어기초사전 Open API (https://krdict.korean.go.kr/api/search)
      응답은 req_type 파라미터와 무관하게 XML로만 내려온다 (실측 확인).
@@ -13,26 +14,36 @@ API: 한국어기초사전 Open API (https://krdict.korean.go.kr/api/search)
 """
 
 import os
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
+import local_dictionary
+
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 API_KEY = os.getenv("KRDICT_API_KEY")
 BASE_URL = "https://krdict.korean.go.kr/api/search"
-_api_unavailable = False
+_api_retry_after = 0.0
+API_RETRY_SECONDS = 300
 
 
 def lookup(word: str) -> list[dict]:
-    """표제어로 한국어기초사전을 검색해 뜻풀이 목록을 반환. 미등재 시 빈 리스트."""
-    global _api_unavailable
+    """표제어로 뜻풀이 목록을 반환한다. 로컬 사전을 먼저 조회한다."""
+    global _api_retry_after
 
+    local_entries = local_dictionary.lookup(word)
+    if local_entries:
+        return local_entries
+
+    # 로컬 사전에 없는 항목만 기존 Open API로 보조 조회한다. API 키가 없거나
+    # 네트워크가 끊겨도 발음·형태소 분석 전체를 실패시키지 않는다.
     if not API_KEY:
-        raise RuntimeError("KRDICT_API_KEY is not configured")
-    if _api_unavailable:
+        return []
+    if time.monotonic() < _api_retry_after:
         return []
 
     params = {"key": API_KEY, "q": word, "part": "word", "method": "exact"}
@@ -40,9 +51,9 @@ def lookup(word: str) -> list[dict]:
         resp = requests.get(BASE_URL, params=params, timeout=3)
         resp.raise_for_status()
     except requests.exceptions.RequestException:
-        # 뜻풀이 조회는 발음·형태소 분석의 보조 기능이다. 외부 사전이 잠시
-        # 불안정하면 이번 서버 실행 동안 추가 요청을 피하고 빈 후보만 반환한다.
-        _api_unavailable = True
+        # 일시 장애는 일정 시간만 쉬고 재시도한다. 서버를 재시작할 때까지
+        # 영구 차단하면 복구된 사전을 다시 쓰지 못한다.
+        _api_retry_after = time.monotonic() + API_RETRY_SECONDS
         return []
     return _parse(resp.text)
 

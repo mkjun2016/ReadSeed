@@ -66,6 +66,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 500)
         self.assertEqual(raised.exception.detail, "annotation failed")
 
+    def test_key_info_returns_sentence_indices(self):
+        module = types.ModuleType("key_info_selector")
+        module.select = lambda sentences: [1] if len(sentences) == 2 else []
+        with patch.dict(sys.modules, {"key_info_selector": module}):
+            result = api.key_info(api.KeyInfoRequest(sentences=["첫 문장", "핵심 문장"]))
+        self.assertEqual(result, {"indices": [1]})
+
     @staticmethod
     def fake_pipeline(annotate_sentence):
         module = types.ModuleType("pipeline")

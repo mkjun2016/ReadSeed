@@ -1,9 +1,8 @@
 """
 ReadSeed - 우리말샘(국립국어원) Open API 로더
 
-목적: 표준 발음 정보를 가져오는 스크립트. 한국어기초사전(krdict, dict_lookup.py)은
-      학습자용이라 어휘 범위가 좁고 발음 필드도 없음 (예: '수급자' 미등재).
-      -> 우리말샘으로 보완. 아키텍처의 "G2P 규칙 + 표준 발음 사전 조회" 단계에 해당.
+목적: 표준 발음 정보를 가져오는 스크립트. 내려받은 한국어기초사전 SQLite를
+      먼저 조회하고, 그곳에 없는 항목만 우리말샘 Open API로 보완한다.
 
 API: 우리말샘 Open API (https://opendict.korean.go.kr)
      - /api/search : 검색어 -> 후보 표제어 목록 (target_code 포함, 발음 없음)
@@ -16,28 +15,45 @@ API: 우리말샘 Open API (https://opendict.korean.go.kr)
 """
 
 import os
+import time
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+
+import local_dictionary
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 API_KEY = os.getenv("URIMALSAM_API_KEY")
 SEARCH_URL = "https://opendict.korean.go.kr/api/search"
 VIEW_URL = "https://opendict.korean.go.kr/api/view"
-_api_unavailable = False
+_api_retry_after = 0.0
+API_RETRY_SECONDS = 300
 
 
 def search(word: str) -> list[dict]:
     """표제어로 검색해 (표제어, 뜻풀이, target_code 등) 후보 목록을 반환. 발음은 미포함."""
-    global _api_unavailable
+    global _api_retry_after
+
+    local_entries = local_dictionary.lookup(word)
+    if local_entries:
+        return [
+            {
+                "표제어": entry["표제어"],
+                "품사": entry["품사"],
+                "한자": entry["한자"],
+                "뜻풀이": entry["뜻풀이"],
+                "target_code": "local:{}".format(entry["_local_id"]),
+            }
+            for entry in local_entries
+        ]
 
     # 우리말샘은 한국어기초사전의 보조 사전이다. 키가 없더라도 발음·형태소
     # 분석 전체를 실패시키지 않고 뜻풀이 후보만 비운다.
     if not API_KEY:
         return []
-    if _api_unavailable:
+    if time.monotonic() < _api_retry_after:
         return []
 
     params = {"key": API_KEY, "q": word, "req_type": "json"}
@@ -45,7 +61,7 @@ def search(word: str) -> list[dict]:
         resp = requests.get(SEARCH_URL, params=params, timeout=3)
         resp.raise_for_status()
     except requests.exceptions.RequestException:
-        _api_unavailable = True
+        _api_retry_after = time.monotonic() + API_RETRY_SECONDS
         return []
     channel = resp.json()["channel"]
 
@@ -66,11 +82,15 @@ def search(word: str) -> list[dict]:
 
 def view(target_code: str) -> dict:
     """target_code로 상세 조회해 표준 발음을 포함한 정보를 반환."""
-    global _api_unavailable
+    global _api_retry_after
+
+    local_detail = local_dictionary.lookup_target_code(target_code)
+    if local_detail:
+        return local_detail
 
     if not API_KEY:
         return {"표제어": None, "발음": None, "뜻풀이": None}
-    if _api_unavailable:
+    if time.monotonic() < _api_retry_after:
         return {"표제어": None, "발음": None, "뜻풀이": None}
 
     params = {
@@ -83,7 +103,7 @@ def view(target_code: str) -> dict:
         resp = requests.get(VIEW_URL, params=params, timeout=3)
         resp.raise_for_status()
     except requests.exceptions.RequestException:
-        _api_unavailable = True
+        _api_retry_after = time.monotonic() + API_RETRY_SECONDS
         return {"표제어": None, "발음": None, "뜻풀이": None}
     item = resp.json()["channel"]["item"]
     word_info = item["wordInfo"]  # 표제어에 발음 정보가 없으면 통째로 {}로 옴
