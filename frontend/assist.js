@@ -15,7 +15,7 @@
   const SPACE_CLASS = "readseed-annotation-space";
   const DEFAULT_SETTINGS = {
     pronunciation: true, gloss: true, keyInfo: true, readingGuide: false,
-    annotationSize: "medium", density: "medium", readingSpeed: "normal",
+    annotationSize: "medium", density: "medium", readingSpeed: "normal", reveal: "always",
   };
   const GLOSS_MAX_LENGTH = 24;
   const LANE_GAP = 6;
@@ -187,8 +187,14 @@
       label.textContent = text;
       state.root.append(label);
       state.entries.push({ range, label, kind, block, word, text, width: 0, marker: null });
-      if (!fixedLayout) reserveSpace(block);
+      if (!fixedLayout && !tapToReveal()) reserveSpace(block);
       return true;
+    }
+
+    // With `reveal: "tap"` every hint starts folded into a marker and is shown only
+    // when its word is tapped, so annotated lines need no reserved label lanes.
+    function tapToReveal() {
+      return state.settings.reveal === "tap";
     }
 
     function visibleTextRects() {
@@ -205,7 +211,9 @@
       });
     }
 
-    function showMarker(entry, rect) {
+    function showMarker(entry, firstRect) {
+      // PDF text layers split a word into several glyph boxes; underline them all.
+      const rect = mergeLineRects(entry.range.getClientRects())[0] || firstRect;
       if (!entry.marker) {
         entry.marker = doc.createElement("span");
         entry.marker.className = "readseed-marker";
@@ -225,6 +233,7 @@
       const rect = Array.from(hits[0].range.getClientRects()).find((item) => item.width && item.height);
       return {
         rect,
+        word: hits[0].word,
         surface: hits[0].word?.표기 || hits[0].range.toString(),
         pronunciation: hits.find((entry) => entry.kind === "above")?.word?.발음 || null,
         gloss: hits.find((entry) => entry.kind === "below")?.text || null,
@@ -317,7 +326,7 @@
       // In a fixed layout a hint that has no room still marks its word for tapping.
       const collapse = (entry, rect) => {
         entry.label.style.display = "none";
-        if (fixedLayout) showMarker(entry, rect);
+        if (fixedLayout || tapToReveal()) showMarker(entry, rect);
       };
 
       for (const entry of state.entries) {
@@ -325,6 +334,10 @@
         if (entry.marker) entry.marker.style.display = "none";
         const rect = Array.from(entry.range.getClientRects()).find((item) => item.width && item.height);
         if (!rect || rect.bottom < -80 || rect.top > viewportHeight + 80) continue;
+        if (tapToReveal()) {
+          collapse(entry, rect);
+          continue;
+        }
 
         entry.label.style.display = "block";
         if (!entry.width) entry.width = entry.label.offsetWidth;

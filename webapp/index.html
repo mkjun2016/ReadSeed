@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="ReadSeed" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#fbfaf5" />
+    <title>ReadSeed 함께 읽기</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <link rel="icon" href="/shared/icons/icon-32.png" />
+    <link rel="stylesheet" href="/shared/overlay.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body data-view="home">
+    <header class="appbar">
+      <button id="home-button" class="icon-button" type="button" aria-label="처음 화면으로">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+      </button>
+      <div class="brand">
+        <img src="/shared/icons/icon.svg" alt="" width="28" height="28" />
+        <span id="appbar-title">ReadSeed</span>
+      </div>
+      <div class="appbar-actions">
+        <button id="guide-button" class="text-button" type="button">사용법</button>
+        <button id="settings-button" class="text-button" type="button" aria-haspopup="dialog">글자·힌트</button>
+      </div>
+    </header>
+
+    <main id="home" class="home">
+      <section class="home-hero">
+        <h1>오늘은 무엇을 읽을까요?</h1>
+        <p>읽다가 막히는 낱말을 톡 누르면, 어떻게 읽는지 알려 줄게요.</p>
+      </section>
+
+      <section class="home-section" aria-labelledby="samples-title">
+        <h2 id="samples-title">연습 글</h2>
+        <div id="sample-list" class="sample-list"></div>
+      </section>
+
+      <section class="home-section two-up">
+        <div class="tile">
+          <h2>PDF 열기</h2>
+          <p>교과서나 학습지 PDF를 골라요.</p>
+          <label class="primary-button file-button">
+            PDF 고르기
+            <input id="pdf-input" type="file" accept="application/pdf,.pdf" />
+          </label>
+        </div>
+        <div class="tile">
+          <h2>글 붙여넣기</h2>
+          <textarea id="paste-input" rows="4" placeholder="읽고 싶은 글을 여기에 붙여 넣어요."></textarea>
+          <button id="paste-start" class="primary-button" type="button">이 글 읽기</button>
+        </div>
+      </section>
+      <p id="server-status" class="server-status" role="status"></p>
+    </main>
+
+    <main id="reader" class="reader" hidden>
+      <article id="story" class="story" aria-labelledby="story-title" hidden>
+        <p class="story-kind" id="story-kind"></p>
+        <h1 id="story-title"></h1>
+        <div id="story-body" class="story-body"></div>
+      </article>
+      <section id="pdf" class="pdf" hidden>
+        <div id="pdf-pages" class="pdf-pages" aria-label="PDF 페이지"></div>
+      </section>
+    </main>
+
+    <nav id="reader-dock" class="reader-dock" aria-label="읽기 도구" hidden>
+      <span id="dock-status" class="dock-status" role="status"></span>
+      <div id="pdf-zoom" class="zoom" hidden>
+        <button id="zoom-out" class="dock-button" type="button" aria-label="작게 보기">－</button>
+        <span id="zoom-value">100%</span>
+        <button id="zoom-in" class="dock-button" type="button" aria-label="크게 보기">＋</button>
+      </div>
+      <button id="guide-reading" class="dock-button" type="button">한 낱말씩 읽기</button>
+      <button id="finish-reading" class="dock-button primary" type="button">다 읽었어요</button>
+    </nav>
+
+    <div id="hint-card" class="hint-card" role="dialog" aria-live="polite" hidden>
+      <p class="hint-word" id="hint-word"></p>
+      <p class="hint-sound" id="hint-sound" hidden></p>
+      <p class="hint-meaning" id="hint-meaning" hidden></p>
+      <button id="hint-more" class="hint-more" type="button" hidden>뜻도 볼래요</button>
+    </div>
+
+    <dialog id="settings" class="sheet" aria-labelledby="settings-title">
+      <form method="dialog">
+        <header class="sheet-head">
+          <h2 id="settings-title">글자·힌트</h2>
+          <button class="text-button" value="close">닫기</button>
+        </header>
+        <fieldset>
+          <legend>글자 크기</legend>
+          <div class="segmented" data-setting="fontSize">
+            <button type="button" value="1" style="font-size:16px">가</button>
+            <button type="button" value="2" style="font-size:19px">가</button>
+            <button type="button" value="3" style="font-size:22px">가</button>
+            <button type="button" value="4" style="font-size:26px">가</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>줄 간격</legend>
+          <div class="segmented" data-setting="lineGap">
+            <button type="button" value="normal">보통</button>
+            <button type="button" value="wide">넓게</button>
+            <button type="button" value="wider">아주 넓게</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>글자 사이</legend>
+          <div class="segmented" data-setting="letterSpacing">
+            <button type="button" value="normal">보통</button>
+            <button type="button" value="wide">넓게</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>바탕색</legend>
+          <div class="segmented swatches" data-setting="paper">
+            <button type="button" value="white"><i class="swatch white"></i>하양</button>
+            <button type="button" value="cream"><i class="swatch cream"></i>미색</button>
+            <button type="button" value="sky"><i class="swatch sky"></i>하늘</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>힌트 보기</legend>
+          <div class="segmented" data-setting="reveal">
+            <button type="button" value="tap">누를 때만</button>
+            <button type="button" value="always">항상 보이기</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>힌트 종류</legend>
+          <label class="switch"><input type="checkbox" data-setting="pronunciation" />읽는 법</label>
+          <label class="switch"><input type="checkbox" data-setting="gloss" />쉬운 뜻</label>
+        </fieldset>
+        <fieldset>
+          <legend>한 낱말씩 읽기 속도</legend>
+          <div class="segmented" data-setting="readingSpeed">
+            <button type="button" value="slow">천천히</button>
+            <button type="button" value="normal">보통</button>
+            <button type="button" value="fast">빠르게</button>
+          </div>
+        </fieldset>
+      </form>
+    </dialog>
+
+    <dialog id="guide" class="sheet guide" aria-labelledby="guide-title">
+      <form method="dialog">
+        <h2 id="guide-title">이렇게 읽어요</h2>
+        <ol class="guide-steps">
+          <li><b>읽을 글을 골라요.</b><span>연습 글, 교과서 PDF, 붙여 넣은 글 모두 돼요.</span></li>
+          <li><b>밑줄 친 낱말을 톡 눌러요.</b><span>어떻게 읽는지 알려 줘요. <span class="demo">굳이 → [구지]</span></span></li>
+          <li><b>뜻이 궁금하면 한 번 더.</b><span>‘뜻도 볼래요’를 누르면 쉬운 뜻이 나와요.</span></li>
+          <li><b>다 읽으면 ‘다 읽었어요’.</b><span>오늘 어떤 낱말에서 도움을 받았는지 보여 줘요.</span></li>
+        </ol>
+        <button class="primary-button wide" value="close">시작하기</button>
+      </form>
+    </dialog>
+
+    <dialog id="report" class="sheet" aria-labelledby="report-title">
+      <form method="dialog">
+        <header class="sheet-head">
+          <h2 id="report-title">잘 읽었어요!</h2>
+          <button class="text-button" value="close">닫기</button>
+        </header>
+        <div id="report-body"></div>
+      </form>
+    </dialog>
+
+    <script src="/shared/assist.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

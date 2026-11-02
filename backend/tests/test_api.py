@@ -73,6 +73,14 @@ class ApiTest(unittest.TestCase):
             result = api.key_info(api.KeyInfoRequest(sentences=["첫 문장", "핵심 문장"]))
         self.assertEqual(result, {"indices": [1]})
 
+    def test_serves_tablet_webapp_and_shared_extension_files(self):
+        mounts = {route.path: route.app.directory for route in api.app.routes if hasattr(route, "app") and hasattr(route.app, "directory")}
+        self.assertEqual(mounts["/app"], api.ROOT / "webapp")
+        self.assertEqual(mounts["/shared"], api.ROOT / "frontend")
+        self.assertTrue((api.ROOT / "webapp" / "index.html").is_file())
+        self.assertTrue((api.ROOT / "frontend" / "assist.js").is_file())
+        self.assertEqual(api.open_webapp().headers["location"], "/app/")
+
     @staticmethod
     def fake_pipeline(annotate_sentence):
         module = types.ModuleType("pipeline")
