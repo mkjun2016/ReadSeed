@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +20,20 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class AnnotateRequest(BaseModel):
     sentence: str = Field(..., min_length=1, description="분석할 문장")
+
+
+class PageLine(BaseModel):
+    text: str
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+class ReflowRequest(BaseModel):
+    lines: list[PageLine] = Field(..., max_length=400, description="쪽 비율 좌표의 글줄")
+    aspect: float = Field(1.0, gt=0, description="쪽 너비 / 높이")
+    spread: bool = Field(False, description="펼친 두 쪽이 한 장인지")
 
 
 class KeyInfoRequest(BaseModel):
@@ -75,6 +90,29 @@ def key_info(request: KeyInfoRequest) -> dict[str, list[int]]:
     from key_info_selector import select
 
     return {"indices": select(request.sentences)}
+
+
+@app.post("/ocr")
+async def ocr_page(request: Request) -> dict[str, list[dict[str, Any]]]:
+    """스캔한 PDF 쪽 이미지(본문 바이트)에서 글줄과 위치를 읽는다. 이미지는 저장하지 않는다."""
+    import ocr
+
+    image = await request.body()
+    try:
+        return {"lines": await run_in_threadpool(ocr.recognize, image)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/reflow")
+def reflow_page(request: ReflowRequest) -> dict[str, list[dict[str, Any]]]:
+    """한 쪽의 글줄을 읽는 순서의 글 덩어리·문단으로 묶고 줄바꿈 띄어쓰기를 되살린다."""
+    from reflow import reflow
+
+    lines = [line.model_dump() for line in request.lines]
+    return {"blocks": reflow(lines, aspect=request.aspect, spread=request.spread)}
 
 
 # The tablet web app is served from this same server, so a tablet only needs one

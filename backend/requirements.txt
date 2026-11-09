@@ -5,3 +5,4 @@ g2pkk
 python-mecab-ko
 fastapi
 uvicorn[standard]
+pyobjc-framework-Vision; sys_platform == "darwin"

@@ -36,6 +36,14 @@
         <p>읽다가 막히는 낱말을 톡 누르면, 어떻게 읽는지 알려 줄게요.</p>
       </section>
 
+      <section id="notebook-tile" class="notebook-tile" aria-labelledby="notebook-title" hidden>
+        <div>
+          <h2 id="notebook-title">낱말 공책</h2>
+          <p id="notebook-count"></p>
+        </div>
+        <button id="notebook-open" class="primary-button" type="button">공책 열기</button>
+      </section>
+
       <section class="home-section" aria-labelledby="samples-title">
         <h2 id="samples-title">연습 글</h2>
         <div id="sample-list" class="sample-list"></div>
@@ -77,9 +85,22 @@
         <span id="zoom-value">100%</span>
         <button id="zoom-in" class="dock-button" type="button" aria-label="크게 보기">＋</button>
       </div>
+      <button id="pdf-view" class="dock-button" type="button" hidden>원래 쪽 보기</button>
       <button id="guide-reading" class="dock-button" type="button">한 낱말씩 읽기</button>
       <button id="finish-reading" class="dock-button primary" type="button">다 읽었어요</button>
     </nav>
+
+    <div id="rotate-hint" class="rotate-hint" role="dialog" aria-modal="true" aria-labelledby="rotate-title" hidden>
+      <div class="rotate-card">
+        <svg class="rotate-icon" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="18" y="8" width="28" height="44" rx="5" />
+          <path d="M28 46h8" />
+        </svg>
+        <h2 id="rotate-title">아이패드를 가로로 돌려 주세요</h2>
+        <p>두 쪽이 펼쳐진 책이라, 가로 화면에서 그림과 글이 더 크게 보여요.</p>
+        <button id="rotate-dismiss" class="text-button" type="button">세로로 볼게요</button>
+      </div>
+    </div>
 
     <div id="hint-card" class="hint-card" role="dialog" aria-live="polite" hidden>
       <p class="hint-word" id="hint-word"></p>
@@ -98,9 +119,9 @@
           <legend>글자 크기</legend>
           <div class="segmented" data-setting="fontSize">
             <button type="button" value="1" style="font-size:16px">가</button>
-            <button type="button" value="2" style="font-size:19px">가</button>
-            <button type="button" value="3" style="font-size:22px">가</button>
-            <button type="button" value="4" style="font-size:26px">가</button>
+            <button type="button" value="2" style="font-size:20px">가</button>
+            <button type="button" value="3" style="font-size:24px">가</button>
+            <button type="button" value="4" style="font-size:28px">가</button>
           </div>
         </fieldset>
         <fieldset>
@@ -156,7 +177,7 @@
           <li><b>읽을 글을 골라요.</b><span>연습 글, 교과서 PDF, 붙여 넣은 글 모두 돼요.</span></li>
           <li><b>밑줄 친 낱말을 톡 눌러요.</b><span>어떻게 읽는지 알려 줘요. <span class="demo">굳이 → [구지]</span></span></li>
           <li><b>뜻이 궁금하면 한 번 더.</b><span>‘뜻도 볼래요’를 누르면 쉬운 뜻이 나와요.</span></li>
-          <li><b>다 읽으면 ‘다 읽었어요’.</b><span>오늘 어떤 낱말에서 도움을 받았는지 보여 줘요.</span></li>
+          <li><b>다 읽으면 ‘다 읽었어요’.</b><span>힌트를 본 낱말을 혼자 읽어 보며 다시 공부해요. 낱말은 ‘낱말 공책’에 모여요.</span></li>
         </ol>
         <button class="primary-button wide" value="close">시작하기</button>
       </form>

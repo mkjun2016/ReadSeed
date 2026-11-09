@@ -73,6 +73,10 @@ class ApiTest(unittest.TestCase):
             result = api.key_info(api.KeyInfoRequest(sentences=["첫 문장", "핵심 문장"]))
         self.assertEqual(result, {"indices": [1]})
 
+    def test_reflow_returns_blocks(self):
+        request = api.ReflowRequest(lines=[{"text": "만복이는 너", "x": 0.1, "y": 0.1, "w": 0.3, "h": 0.03}, {"text": "무 속상했어.", "x": 0.1, "y": 0.15, "w": 0.2, "h": 0.03}])
+        self.assertEqual(api.reflow_page(request)["blocks"][0]["paragraphs"], ["만복이는 너무 속상했어."])
+
     def test_serves_tablet_webapp_and_shared_extension_files(self):
         mounts = {route.path: route.app.directory for route in api.app.routes if hasattr(route, "app") and hasattr(route.app, "directory")}
         self.assertEqual(mounts["/app"], api.ROOT / "webapp")

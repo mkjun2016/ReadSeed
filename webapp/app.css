@@ -17,7 +17,7 @@
   --sound-tint: oklch(0.97 0.025 280);
   --meaning: oklch(0.38 0.11 170);
   --meaning-tint: oklch(0.97 0.03 170);
-  --story-size: 24px;
+  --story-size: 16px;
   --story-line: 2.2;
   --story-tracking: 0.01em;
   --appbar: calc(64px + env(safe-area-inset-top, 0px));
@@ -178,17 +178,42 @@ body[data-view="home"] #home-button { display: none; }
   width: max-content;
   min-width: 100%;
   gap: 18px;
-  padding: 18px var(--gutter) 0;
+  /* Pages use the full screen width; the safe-area inset still applies. */
+  padding: 18px max(10px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)) 0;
   -webkit-touch-callout: none;
 }
 .readseed-pdf-page {
   position: relative;
+  scroll-margin-top: calc(var(--appbar) + 12px); /* keep the page top clear of the sticky app bar */
   overflow: hidden;
   background: white;
   border-radius: 4px;
   box-shadow: 0 1px 3px oklch(0 0 0 / 0.12), 0 6px 18px oklch(0 0 0 / 0.08);
 }
 .readseed-pdf-page canvas { position: absolute; inset: 0; display: block; }
+/* Large text: a patch laid over each text block re-sets the PDF's own text with
+   the reader's size and spacing. The page image underneath is left as it is. */
+.reflow-patch {
+  position: absolute;
+  z-index: 2;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--paper); /* opaque, so the small original lines never show through */
+  box-shadow: 0 0 0 1px var(--line), 0 6px 20px oklch(0 0 0 / 0.08);
+  color: var(--ink);
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.reflow-patch p {
+  margin: 0 0 0.5em;
+  font-size: var(--story-size);
+  line-height: var(--story-line);
+  letter-spacing: var(--story-tracking);
+}
+.reflow-patch p:last-child { margin-bottom: 0; }
+.readseed-pdf-page.large-text { background: var(--paper); }
 .page-number { position: absolute; right: 10px; bottom: 8px; color: var(--ink-faint); font-size: 13px; }
 
 /* PDF.js text layer: transparent text aligned over the page image. */
@@ -227,7 +252,24 @@ body[data-view="home"] #home-button { display: none; }
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
 }
-.dock-status { flex: 1; min-width: 0; color: var(--ink-soft); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-status {
+  position: absolute;
+  left: var(--gutter);
+  bottom: calc(100% + 10px);
+  max-width: calc(100% - var(--gutter) * 2);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--surface) 94%, transparent);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 14px oklch(0 0 0 / 0.08);
+  color: var(--ink-soft);
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.dock-status:empty { display: none; }
+.reader-dock { justify-content: flex-end; }
 .dock-button {
   min-height: 52px;
   padding: 0 18px;
@@ -265,6 +307,34 @@ body[data-view="home"] #home-button { display: none; }
 .hint-sound small { display: block; color: var(--ink-soft); font-size: 14px; font-weight: 600; }
 .hint-meaning { margin-top: 8px !important; padding: 8px 12px; border-radius: 10px; background: var(--meaning-tint); color: var(--meaning); font-size: 18px; line-height: 1.5; }
 .hint-more { width: 100%; min-height: 48px; margin-top: 10px; border: 0; border-radius: 12px; background: var(--meaning-tint); color: var(--meaning); font-size: 17px; font-weight: 700; }
+
+/* ---------- Rotate prompt for two-page spreads ---------- */
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: grid;
+  place-items: center;
+  padding: var(--gutter);
+  background: color-mix(in oklch, var(--paper) 80%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.rotate-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 32px 28px 20px;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: 0 20px 60px oklch(0 0 0 / 0.18);
+  text-align: center;
+}
+.rotate-card h2 { margin: 6px 0 0; font-size: 24px; }
+.rotate-card p { margin: 0 0 6px; color: var(--ink-soft); font-size: 18px; }
+.rotate-icon { width: 96px; height: 96px; color: var(--brand); stroke-width: 3; animation: turn 2.4s cubic-bezier(0.3, 0, 0, 1) infinite; }
+@keyframes turn { 0%, 25% { transform: rotate(0deg); } 55%, 100% { transform: rotate(-90deg); } }
 
 /* ---------- Sheets (dialog) ---------- */
 .sheet {
@@ -354,10 +424,45 @@ body[data-view="home"] #home-button { display: none; }
 #readseed-reading-controls button { min-height: 48px; padding: 0 16px; border-radius: 12px; font-size: 17px; }
 
 @media (max-width: 700px) {
-  :root { --story-size: 21px; }
-  .dock-status { display: none; }
   .home-hero h1 { font-size: 27px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .hint-card { animation: none; }
+  .rotate-icon { animation: none; transform: rotate(-90deg); }
 }
+
+/* ---------- Word study ---------- */
+.report-note { margin: 0; color: var(--ink-soft); font-size: 15px; }
+.study-progress { height: 8px; border-radius: 999px; background: var(--fill); overflow: hidden; }
+.study-progress::after { content: ""; display: block; width: calc(var(--done, 0) * 100%); height: 100%; border-radius: inherit; background: var(--brand); transition: width 200ms cubic-bezier(0.3, 0, 0, 1); }
+.study-prompt { margin: 6px 0 0; color: var(--ink-soft); font-size: 17px; font-weight: 700; text-align: center; }
+.study-word { margin: 0; font-size: 48px; font-weight: 800; line-height: 1.2; text-align: center; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+.study-context { margin: 0; padding: 12px 16px; border-radius: 14px; background: var(--fill); font-size: 18px; line-height: 1.7; text-align: center; }
+.study-context b { color: var(--ink); text-decoration: underline 3px dotted oklch(0.554 0.214 280 / 0.7); text-underline-offset: 5px; }
+.study-answer { display: grid; justify-items: center; gap: 4px; padding: 14px 16px; border-radius: 14px; text-align: center; animation: card-in 150ms cubic-bezier(0.3, 0, 0, 1); }
+.study-answer small { color: var(--ink-soft); font-size: 14px; font-weight: 600; }
+.study-answer.sound { background: var(--sound-tint); color: var(--sound); font-size: 34px; font-weight: 800; }
+.study-answer.meaning { background: var(--meaning-tint); color: var(--meaning); font-size: 19px; line-height: 1.5; }
+.study-rule { color: var(--ink); font-size: 16px; font-weight: 600; }
+.study-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.study-choice { min-height: 56px; border: 0; border-radius: 14px; background: var(--fill); color: var(--ink); font-size: 18px; font-weight: 700; }
+.study-choice.good { background: var(--brand); color: white; }
+.study-choice:active { filter: brightness(0.94); }
+.study-reveal { min-height: 56px; font-size: 18px; }
+.study-cheer { margin: 0; font-size: 22px; font-weight: 800; text-align: center; }
+@media (prefers-reduced-motion: reduce) {
+  .study-answer { animation: none; }
+  .study-progress::after { transition: none; }
+}
+
+/* ---------- Word notebook ---------- */
+.notebook-tile { margin-top: 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border-radius: 18px; background: var(--sound-tint); }
+.notebook-tile[hidden] { display: none; }
+.notebook-tile h2 { margin: 0; font-size: 20px; }
+.notebook-tile p { margin: 2px 0 0; color: var(--sound); font-weight: 700; }
+.notebook-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.notebook-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.notebook-word { font-size: 20px; font-weight: 800; }
+.notebook-word small { color: var(--sound); font-size: 17px; font-weight: 700; }
+.notebook-stars { color: oklch(0.72 0.15 75); font-size: 20px; letter-spacing: 2px; white-space: nowrap; }
+.chip.learned { background: var(--brand-tint); color: var(--brand-strong); }

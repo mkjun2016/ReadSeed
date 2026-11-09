@@ -4,12 +4,16 @@
 import "./promise-polyfill.mjs";
 import { SAMPLES } from "./samples.js";
 
-const { create } = globalThis.ReadSeedAssist;
+const { create, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
 
 const SETTINGS_KEY = "readseedWebSettings";
 const GUIDE_KEY = "readseedWebGuideSeen";
+const NOTEBOOK_KEY = "readseedWebNotebook";
+// A word is learned once it is read right, alone, on this many different days in a row.
+const LEARNED_STREAK = 3;
+const NOTEBOOK_LIMIT = 300;
 const DEFAULT_SETTINGS = {
-  fontSize: "2",
+  fontSize: "1",
   lineGap: "wide",
   letterSpacing: "normal",
   paper: "cream",
@@ -18,7 +22,8 @@ const DEFAULT_SETTINGS = {
   gloss: true,
   readingSpeed: "slow",
 };
-const FONT_SIZES = { 1: 20, 2: 24, 3: 28, 4: 32 };
+// Reading text sizes in CSS px, which equal iOS points on iPad; 16pt is the default.
+const FONT_SIZES = { 1: 16, 2: 20, 3: 24, 4: 28 };
 const LINE_GAPS = { normal: 1.9, wide: 2.3, wider: 2.7 };
 const TRACKING = { normal: "0.01em", wide: "0.08em" };
 const MAX_SENTENCES = 40;
@@ -26,10 +31,19 @@ const MAX_CONCURRENT_REQUESTS = 2;
 const RENDER_EVERY = 3;
 const REQUEST_TIMEOUT_MS = 15_000;
 const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2];
-const MAX_PAGE_WIDTH = 1000;
+// Wide enough for a landscape 13-inch iPad; desktop windows stop here.
+const MAX_PAGE_WIDTH = 1400;
 // iPad Safari kills a tab that holds too much canvas memory, so page images are
 // capped in pixels and dropped again once they scroll far out of view.
 const MAX_CANVAS_PIXELS = 5_000_000;
+// Scanned pages are read at this width; enough for body text without a huge upload.
+const OCR_WIDTH = 1800;
+// A block taller than this share of its page is the page's running text (a chapter
+// book's text page), so its patch may widen to the page margins.
+const TEXT_PAGE_SHARE = 0.45;
+// Wider than this, a PDF page is a two-page spread, which reads best in landscape.
+const SPREAD_ASPECT = 1.2;
+const portrait = window.matchMedia("(orientation: portrait)");
 const TYPE_HELP = {
   연음: "받침이 뒤 글자로 넘어가서 읽혀요",
   구개음화: "ㄷ·ㅌ 받침이 ㅈ·ㅊ 소리로 바뀌어요",
@@ -50,6 +64,9 @@ const dockStatus = $("#dock-status");
 
 const textAssist = create();
 const pdfAssist = create({ fixedLayout: true, blockSelector: ".readseed-pdf-page", textSelector: ".textLayer span" });
+// "Large text" mode re-sets each text block of a PDF page on a patch laid over it,
+// so the reader's own size and spacing apply. The patch text is the PDF's own text.
+const patchAssist = create({ excludedSelector: `${EXCLUDED_SELECTORS}, .textLayer, .page-number` });
 const textCache = new Map();
 let settings = loadSettings();
 let mode = null;
@@ -57,7 +74,7 @@ let activeAssist = null;
 let run = 0;
 let taps = new Map();
 let pdfjs = null;
-const pdf = { doc: null, pages: [], cache: new Map(), zoom: 1, current: null, visibility: new Map(), timer: null, observers: [] };
+const pdf = { doc: null, pages: [], cache: new Map(), layouts: new Map(), zoom: 1, large: true, spread: false, portraitOk: false, current: null, visibility: new Map(), timer: null, observers: [] };
 
 // ---------- Storage (may be unavailable in private browsing) ----------
 
@@ -194,11 +211,13 @@ function leaveReader() {
   run += 1;
   textAssist.clearOverlay();
   pdfAssist.clearOverlay();
+  patchAssist.clearOverlay();
   closePdf();
   activeAssist = null;
   mode = null;
   $("#appbar-title").textContent = "ReadSeed";
   showView("home");
+  updateRotateHint();
   window.scrollTo(0, 0);
 }
 
@@ -207,6 +226,7 @@ function startReading(title) {
   taps = new Map();
   textAssist.clearOverlay();
   pdfAssist.clearOverlay();
+  patchAssist.clearOverlay();
   $("#appbar-title").textContent = title;
   $("#guide-reading").textContent = "한 낱말씩 읽기";
   showView("reader");
@@ -224,6 +244,7 @@ function openText({ title, kind = "", text }) {
   $("#story").hidden = false;
   pdfSection.hidden = true;
   $("#pdf-zoom").hidden = true;
+  $("#pdf-view").hidden = true;
   $("#story-title").textContent = title;
   $("#story-kind").textContent = kind;
   storyBody.replaceChildren(...text.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
@@ -255,7 +276,25 @@ function closePdf() {
   clearTimeout(pdf.timer);
   pdf.doc?.destroy();
   pdf.doc = null;
+  pdf.spread = false;
   pdfPages.replaceChildren();
+  updateRotateHint();
+}
+
+// Two-page spreads are shown landscape. Browsers on iPad cannot lock the screen,
+// so the reader is asked to turn the iPad, and may choose to stay in portrait.
+async function isSpreadDocument(doc) {
+  const sample = Math.min(doc.numPages, 3);
+  let wide = 0;
+  for (let number = 1; number <= sample; number += 1) {
+    const view = (await doc.getPage(number)).getViewport({ scale: 1 });
+    if (view.width / view.height > SPREAD_ASPECT) wide += 1;
+  }
+  return wide * 2 >= sample;
+}
+
+function updateRotateHint() {
+  $("#rotate-hint").hidden = !(mode === "pdf" && pdf.spread && portrait.matches && !pdf.portraitOk);
 }
 
 async function openPdf(file) {
@@ -263,13 +302,16 @@ async function openPdf(file) {
   const thisRun = startReading(file.name.replace(/\.pdf$/i, ""));
   closePdf();
   mode = "pdf";
-  activeAssist = pdfAssist;
   $("#story").hidden = true;
   pdfSection.hidden = false;
   $("#pdf-zoom").hidden = false;
+  $("#pdf-view").hidden = false;
   pdf.cache = new Map();
+  pdf.layouts = new Map();
   pdf.zoom = 1;
+  activeAssist = pdf.large ? patchAssist : pdfAssist;
   updateZoomLabel();
+  updateViewLabel();
   setStatus("PDF를 여는 중이에요…");
   try {
     const lib = await loadPdfjs();
@@ -285,6 +327,11 @@ async function openPdf(file) {
       return;
     }
     pdf.doc = doc;
+    pdf.spread = await isSpreadDocument(doc);
+    pdf.portraitOk = false;
+    // Installed web apps on some tablets may lock; iPad Safari refuses, which is fine.
+    if (pdf.spread) screen.orientation?.lock?.("landscape").catch(() => {});
+    updateRotateHint();
     await layoutPdf();
     setStatus("읽을 쪽을 펴면 힌트를 준비해요");
   } catch (error) {
@@ -300,14 +347,19 @@ async function layoutPdf() {
   pdf.visibility.clear();
   pdf.current = null;
   pdfAssist.clearOverlay();
+  patchAssist.clearOverlay();
   const gutter = parseFloat(getComputedStyle(pdfPages).paddingLeft) || 20;
-  const width = Math.min(pdfSection.clientWidth - gutter * 2, MAX_PAGE_WIDTH) * pdf.zoom;
+  const fullWidth = Math.min(pdfSection.clientWidth - gutter * 2, MAX_PAGE_WIDTH);
+  // In landscape the original view fits a whole spread between the app bar and the
+  // dock. Large text keeps the full width instead, for longer re-set lines.
+  const room = window.innerHeight - $(".appbar").offsetHeight - $("#reader-dock").offsetHeight - 36;
   const pages = [];
   for (let number = 1; number <= pdf.doc.numPages; number += 1) {
     const page = await pdf.doc.getPage(number);
     if (run !== thisRun) return;
     const base = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: width / base.width });
+    const fit = pdf.spread && !portrait.matches && !pdf.large ? Math.min(fullWidth, room * (base.width / base.height)) : fullWidth;
+    const viewport = page.getViewport({ scale: (fit * pdf.zoom) / base.width });
     const element = document.createElement("div");
     element.className = "readseed-pdf-page";
     element.dataset.page = String(number);
@@ -318,7 +370,7 @@ async function layoutPdf() {
     label.className = "page-number";
     label.textContent = `${number}쪽`;
     element.append(label);
-    pages.push({ number, page, viewport, element, canvas: null, task: null, textLayer: null, text: null });
+    pages.push({ number, page, viewport, element, canvas: null, task: null, textLayer: null, content: null });
   }
   pdf.pages = pages;
   pdfPages.replaceChildren(...pages.map((entry) => entry.element));
@@ -386,10 +438,8 @@ async function ensureTextLayer(entry) {
     const container = document.createElement("div");
     container.className = "textLayer";
     entry.element.append(container);
-    const content = await entry.page.getTextContent();
-    await new pdfjs.TextLayer({ textContentSource: content, container, viewport: entry.viewport }).render();
-    // A line end becomes a space so a sentence that wraps is analysed as one.
-    entry.text = content.items.map((item) => (item.str || "") + (item.hasEOL ? " " : "")).join("");
+    entry.content = await entry.page.getTextContent();
+    await new pdfjs.TextLayer({ textContentSource: entry.content, container, viewport: entry.viewport }).render();
     return container;
   })();
   return entry.textLayer;
@@ -410,19 +460,208 @@ function pickCurrentPage() {
   analyzePdfPage(pdf.pages[best - 1]).catch(reportError);
 }
 
+// PDF.js text items grouped into lines, in page-relative coordinates (0–1, top left).
+function textLayerLines(entry) {
+  const base = entry.page.getViewport({ scale: 1 });
+  const lines = [];
+  let line = null;
+  for (const item of entry.content?.items || []) {
+    if (!item.str && !item.hasEOL) continue;
+    const [left, baseline] = base.convertToViewportPoint(item.transform[4], item.transform[5]);
+    const height = Math.hypot(item.transform[2], item.transform[3]) || item.height;
+    const top = baseline - height;
+    if (line && Math.abs(line.top - top) > height * 0.5) {
+      lines.push(line);
+      line = null;
+    }
+    if (item.str) {
+      line ??= { text: "", left, right: left, top, bottom: baseline };
+      line.text += item.str;
+      line.left = Math.min(line.left, left);
+      line.right = Math.max(line.right, left + item.width);
+      line.bottom = Math.max(line.bottom, baseline);
+    }
+    if (item.hasEOL && line) {
+      lines.push(line);
+      line = null;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.filter((item) => item.text.trim()).map((item) => ({
+    text: item.text,
+    x: item.left / base.width,
+    y: item.top / base.height,
+    w: (item.right - item.left) / base.width,
+    h: (item.bottom - item.top) / base.height,
+  }));
+}
+
+// A scanned page has no text layer, so its image is read on the server.
+async function ocrLines(entry) {
+  const base = entry.page.getViewport({ scale: 1 });
+  const viewport = entry.page.getViewport({ scale: Math.min(OCR_WIDTH / base.width, 4) });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  try {
+    await entry.page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const image = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    const response = await fetch("/ocr", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: image });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.detail || `OCR 실패 (${response.status})`);
+    return payload.lines;
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+// Text blocks of a page with the line-break spaces restored. Cached per page number,
+// so zooming or switching views never reads a page twice.
+async function pageLayout(entry) {
+  if (pdf.layouts.has(entry.number)) return pdf.layouts.get(entry.number);
+  const promise = (async () => {
+    await ensureTextLayer(entry);
+    let lines = textLayerLines(entry);
+    let scanned = false;
+    if (lines.map((line) => line.text).join("").replace(/\s/g, "").length < 4) {
+      if (pdf.current === entry.number) setStatus("그림으로 된 쪽이라 글자를 읽고 있어요…");
+      lines = await ocrLines(entry);
+      scanned = true;
+    }
+    if (!lines.length) return { blocks: [], text: "", scanned };
+    const base = entry.page.getViewport({ scale: 1 });
+    const aspect = base.width / base.height;
+    const response = await fetch("/reflow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines, aspect, spread: aspect > 1.2 }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.detail || `글 정리 실패 (${response.status})`);
+    const blocks = payload.blocks;
+    return { blocks, text: blocks.flatMap((block) => block.paragraphs).join("\n"), scanned, spread: aspect > 1.2 };
+  })();
+  pdf.layouts.set(entry.number, promise);
+  promise.catch(() => pdf.layouts.delete(entry.number));
+  return promise;
+}
+
+function patchBox(block, layout, width, height) {
+  const pad = 10;
+  let left = block.x * width - pad;
+  let right = (block.x + block.w) * width + pad;
+  if (block.h > TEXT_PAGE_SHARE) {
+    // The running text of a page: use that page's margins, so large text keeps
+    // a reasonable line length instead of the original narrow measure.
+    const half = layout.spread ? width / 2 : width;
+    const start = layout.spread && block.x + block.w / 2 > 0.5 ? half : 0;
+    left = Math.min(left, start + half * 0.06);
+    right = Math.max(right, start + half * 0.94);
+  }
+  return { left, top: block.y * height - pad, width: right - left, minHeight: block.h * height + pad * 2 };
+}
+
+function renderPatches(entry, layout) {
+  removePatches(entry);
+  const { width, height } = entry.viewport;
+  for (const block of layout.blocks) {
+    const patch = document.createElement("div");
+    patch.className = "reflow-patch";
+    const box = patchBox(block, layout, width, height);
+    Object.assign(patch.style, {
+      left: `${Math.max(0, box.left)}px`,
+      top: `${Math.max(0, box.top)}px`,
+      width: `${Math.min(width, box.width)}px`,
+      minHeight: `${box.minHeight}px`,
+    });
+    patch.append(...block.paragraphs.map((text) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = text;
+      return paragraph;
+    }));
+    entry.element.append(patch);
+  }
+  entry.element.classList.add("large-text");
+  fitPage(entry);
+}
+
+function removePatches(entry) {
+  entry.element.querySelectorAll(".reflow-patch").forEach((patch) => patch.remove());
+  entry.element.classList.remove("large-text");
+  entry.element.style.height = `${Math.floor(entry.viewport.height)}px`;
+}
+
+// Large text may need more room than the original block; the page grows downward
+// rather than letting the patch spill onto the next page.
+function fitPage(entry) {
+  let bottom = entry.viewport.height;
+  entry.element.querySelectorAll(".reflow-patch").forEach((patch) => {
+    bottom = Math.max(bottom, patch.offsetTop + patch.offsetHeight + 16);
+  });
+  entry.element.style.height = `${Math.floor(bottom)}px`;
+}
+
 async function analyzePdfPage(entry) {
   const thisRun = run;
   const isCurrent = () => run === thisRun && pdf.current === entry.number;
-  await ensureTextLayer(entry);
-  if (!isCurrent()) return;
   pdfAssist.clearOverlay();
-  pdfAssist.setTarget(entry.element, null);
-  const sentences = splitSentences(entry.text || "").slice(0, MAX_SENTENCES);
-  if (!sentences.length) {
-    setStatus(`${entry.number}쪽에는 읽을 글자가 없어요. 스캔한 PDF는 아직 힌트를 줄 수 없어요.`);
+  patchAssist.clearOverlay();
+  let layout;
+  try {
+    layout = await pageLayout(entry);
+  } catch (error) {
+    console.error("[ReadSeed]", error);
+    if (isCurrent()) setStatus(`${entry.number}쪽 글자를 읽지 못했어요.`);
     return;
   }
-  await analyze(pdfAssist, sentences, entry.number, pdf.cache, isCurrent);
+  if (!isCurrent()) return;
+  if (pdf.large && layout.blocks.length) renderPatches(entry, layout);
+  else removePatches(entry);
+  const sentences = splitSentences(layout.text).slice(0, MAX_SENTENCES);
+  if (!sentences.length) {
+    setStatus(`${entry.number}쪽에는 읽을 글자가 없어요.`);
+    return;
+  }
+  if (!pdf.large && layout.scanned) {
+    // The scanned image has no text to anchor hints to; the patches do.
+    setStatus("그림으로 된 쪽은 ‘큰 글씨로 보기’에서 힌트를 볼 수 있어요");
+    return;
+  }
+  const assist = pdf.large ? patchAssist : pdfAssist;
+  assist.setTarget(entry.element, null);
+  activeAssist = assist;
+  await analyze(assist, sentences, entry.number, pdf.cache, isCurrent);
+  if (pdf.large && isCurrent()) fitPage(entry);
+  // Read the next page ahead so turning to it is instant.
+  const next = pdf.pages[entry.number];
+  if (next) {
+    pageLayout(next).then((nextLayout) => {
+      if (run === thisRun && pdf.large && nextLayout.blocks.length && !next.element.classList.contains("large-text")) renderPatches(next, nextLayout);
+    }).catch(() => {});
+  }
+}
+
+function updateViewLabel() {
+  $("#pdf-view").textContent = pdf.large ? "원래 쪽 보기" : "큰 글씨로 보기";
+  $("#pdf-view").setAttribute("aria-pressed", String(pdf.large));
+}
+
+async function toggleLargeText() {
+  pdf.large = !pdf.large;
+  updateViewLabel();
+  hideCard();
+  pdf.pages.forEach(removePatches);
+  activeAssist = pdf.large ? patchAssist : pdfAssist;
+  if (pdf.spread && !portrait.matches) {
+    // The page width depends on the view here, so lay the pages out again.
+    const keep = pdf.current || 1;
+    await layoutPdf();
+    pdf.pages[keep - 1]?.element.scrollIntoView({ block: "start" });
+    return;
+  }
+  const entry = pdf.pages[(pdf.current || 1) - 1];
+  if (entry) await analyzePdfPage(entry);
 }
 
 function updateZoomLabel() {
@@ -478,7 +717,7 @@ function showCard(info) {
 
   card.hidden = false;
   placeCard(info.rect);
-  logTap(info, meaning && !info.pronunciation);
+  logTap(info, meaning, meaning && !info.pronunciation);
 }
 
 function placeCard(rect) {
@@ -491,16 +730,44 @@ function placeCard(rect) {
   Object.assign(card.style, { left: `${left}px`, top: `${Math.max(top, y)}px` });
 }
 
-function logTap(info, meaningShown) {
+function logTap(info, meaningText, meaningShown) {
   const key = info.surface;
   const previous = taps.get(key);
   taps.set(key, {
     surface: info.surface,
     pronunciation: info.pronunciation,
     type: info.pronunciation ? info.word?.유형 : null,
+    meaningText: meaningText || previous?.meaningText || null,
     meaning: Boolean(previous?.meaning || meaningShown),
+    context: previous?.context || contextOf(info.range),
     count: (previous?.count || 0) + 1,
   });
+}
+
+// The sentence a word was read in, so study cards show it where the child met it.
+// It is copied from the page as is; nothing on the page changes.
+function contextOf(range) {
+  if (!range) return null;
+  const node = range.startContainer;
+  const element = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest("p, li, span, div");
+  if (!element) return null;
+  const before = document.createRange();
+  before.setStart(element, 0);
+  before.setEnd(range.startContainer, range.startOffset);
+  const text = element.textContent.replace(/\s+/g, " ");
+  const word = range.toString().replace(/\s+/g, " ");
+  const start = before.toString().replace(/\s+/g, " ").length;
+  if (text.slice(start, start + word.length) !== word) return null;
+  const end = start + word.length;
+  let from = 0;
+  for (const match of text.slice(0, start).matchAll(/[.!?…]["”’']?\s/g)) from = match.index + match[0].length;
+  const stop = text.slice(end).search(/[.!?…]/);
+  let to = stop < 0 ? text.length : end + stop + 1;
+  while (/["”’']/.test(text[to] || "")) to += 1;
+  // Keep the card short: a long sentence is cut to a window around the word.
+  const head = start - from > 28 ? `…${text.slice(start - 24, start)}` : text.slice(from, start);
+  const tail = to - end > 32 ? `${text.slice(end, end + 28)}…` : text.slice(end, to);
+  return { before: head.trimStart(), word, after: tail.trimEnd() };
 }
 
 function onTextTap(event) {
@@ -528,6 +795,7 @@ function renderReport() {
   count.textContent = String(entries.length);
   intro.append(count, "개");
   const parts = [intro];
+  saveToNotebook(entries);
 
   const byType = new Map();
   for (const entry of sounds) {
@@ -542,10 +810,268 @@ function renderReport() {
   }
   const note = document.createElement("p");
   note.className = "report-note";
-  note.style.cssText = "margin:0;color:var(--ink-soft);font-size:15px";
-  note.textContent = "다음에 읽을 때 이 낱말들을 힌트 없이 읽어 보세요.";
-  parts.push(note);
+  note.textContent = "힌트를 본 낱말을 혼자 읽어 보며 한 번 더 익혀요.";
+  parts.push(note, button(`낱말 공부하기 (${entries.length}개)`, "primary-button wide", () => startStudy(entries)));
   body.replaceChildren(...parts);
+}
+
+function button(label, className, onClick) {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = className;
+  element.textContent = label;
+  element.addEventListener("click", onClick);
+  return element;
+}
+
+function element(tag, className, ...children) {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.append(...children);
+  return node;
+}
+
+// ---------- Word study ----------
+// One card per word the child needed a hint for: the child reads the word aloud
+// alone first, then opens the answer and says whether they read it right. The app
+// never reads it for them. Words marked "again" come back once at the end.
+
+const MAX_RETRIES = 2;
+let study = null;
+
+function startStudy(entries, from = "report") {
+  study = { from, entries, queue: entries.map((entry) => ({ entry, tries: 0 })), total: entries.length, done: 0, firstTry: new Set(), again: new Set(), revealed: false };
+  $("#report-title").textContent = from === "notebook" ? "낱말 복습" : "낱말 공부";
+  renderStudy();
+}
+
+function stopStudy() {
+  study = null;
+  $("#report-title").textContent = "잘 읽었어요!";
+}
+
+function renderStudy() {
+  const body = $("#report-body");
+  const item = study.queue[0];
+  if (!item) {
+    renderStudyEnd();
+    return;
+  }
+  const { entry } = item;
+  const progress = element("div", "study-progress");
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", String(study.total));
+  progress.setAttribute("aria-valuenow", String(study.done));
+  progress.style.setProperty("--done", String(study.done / study.total));
+
+  const prompt = element("p", "study-prompt", item.tries ? "한 번 더 읽어 볼까요?" : entry.pronunciation ? "소리 내어 읽어 보세요" : "무슨 뜻인지 떠올려 보세요");
+  const word = element("p", "study-word", entry.surface);
+  const parts = [progress, prompt, word];
+  if (entry.context) {
+    parts.push(element("p", "study-context", entry.context.before, element("b", "", entry.context.word), entry.context.after));
+  }
+
+  if (!study.revealed) {
+    parts.push(button(entry.pronunciation ? "읽는 법 보기" : "뜻 보기", "primary-button wide study-reveal", () => {
+      study.revealed = true;
+      renderStudy();
+    }));
+  } else {
+    if (entry.pronunciation) {
+      const sound = element("div", "study-answer sound", element("small", "", "이렇게 읽어요"), `[${entry.pronunciation}]`);
+      if (TYPE_HELP[entry.type]) sound.append(element("span", "study-rule", TYPE_HELP[entry.type]));
+      parts.push(sound);
+    }
+    if (entry.meaning && entry.meaningText) {
+      parts.push(element("div", "study-answer meaning", element("small", "", "쉬운 뜻"), entry.meaningText));
+    }
+    const right = entry.pronunciation ? "맞게 읽었어요" : "알고 있었어요";
+    parts.push(element("div", "study-actions",
+      button("한 번 더 볼래요", "study-choice", () => nextStudyCard(false)),
+      button(right, "study-choice good", () => nextStudyCard(true))));
+  }
+  body.replaceChildren(...parts);
+  body.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function nextStudyCard(knewIt) {
+  const item = study.queue.shift();
+  study.revealed = false;
+  // Only the first answer counts for the notebook: after seeing the answer, a
+  // second try is practice, not proof the child can read the word alone.
+  if (!item.tries) recordStudy(item.entry.surface, knewIt);
+  if (knewIt) {
+    if (!item.tries) study.firstTry.add(item.entry.surface);
+    study.done += 1;
+  } else {
+    study.again.add(item.entry.surface);
+    item.tries += 1;
+    // Seeing the answer again later helps; seeing it forever does not.
+    if (item.tries <= MAX_RETRIES) study.queue.push(item);
+    else study.done += 1;
+  }
+  renderStudy();
+}
+
+function renderStudyEnd() {
+  const body = $("#report-body");
+  const firstTry = study.firstTry.size;
+  const message = element("p", "report-number", "처음부터 혼자 읽은 낱말 ", element("b", "", String(firstTry)), `개 / ${study.total}개`);
+  const parts = [element("p", "study-cheer", firstTry === study.total ? "모두 혼자 읽었어요. 정말 잘했어요!" : "끝까지 공부했어요. 잘했어요!"), message];
+  const learned = study.entries.filter((entry) => notebookEntry(entry.surface)?.learned && study.firstTry.has(entry.surface));
+  if (learned.length) {
+    parts.push(reportGroup("다 익힌 낱말", `${LEARNED_STREAK}번 다른 날에 혼자 읽었어요`, learned.map((entry) => entry.surface), "learned"));
+  }
+  const again = study.entries.filter((entry) => study.again.has(entry.surface));
+  const back = study.from === "notebook" ? "공책 보기" : "결과 보기";
+  if (again.length) {
+    parts.push(reportGroup("다음에 한 번 더 볼 낱말", "낱말 공책에 남겨 둘게요", again.map((entry) => entry.pronunciation ? `${entry.surface} [${entry.pronunciation}]` : entry.surface), ""));
+    parts.push(element("div", "study-actions",
+      button(back, "study-choice", leaveStudy),
+      button("이 낱말만 다시", "study-choice good", () => startStudy(again, study.from))));
+  } else {
+    parts.push(button(back, "primary-button wide", leaveStudy));
+  }
+  body.replaceChildren(...parts);
+}
+
+function leaveStudy() {
+  const from = study?.from;
+  stopStudy();
+  if (from === "notebook") renderNotebook();
+  else renderReport();
+}
+
+// ---------- Word notebook ----------
+// Every word the child needed a hint for is kept on this device only (never sent
+// anywhere), with the sentence it was met in. A word is due for review until it is
+// read right, alone, on LEARNED_STREAK different days; a miss starts it over.
+
+function today() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function loadNotebook() {
+  try {
+    const words = JSON.parse(readStorage(NOTEBOOK_KEY) || "[]");
+    return Array.isArray(words) ? words.filter((word) => word && typeof word.surface === "string") : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function storeNotebook(words) {
+  // Oldest learned words go first when the notebook is full.
+  const kept = words.length > NOTEBOOK_LIMIT
+    ? [...words].sort((a, b) => Number(!a.learned) - Number(!b.learned) || (b.added || "").localeCompare(a.added || "")).slice(0, NOTEBOOK_LIMIT)
+    : words;
+  writeStorage(NOTEBOOK_KEY, JSON.stringify(kept));
+  updateNotebookTile();
+}
+
+function notebookEntry(surface) {
+  return loadNotebook().find((word) => word.surface === surface) || null;
+}
+
+function saveToNotebook(entries) {
+  const words = loadNotebook();
+  for (const entry of entries) {
+    const word = words.find((item) => item.surface === entry.surface);
+    const fields = {
+      surface: entry.surface,
+      pronunciation: entry.pronunciation,
+      type: entry.type,
+      meaningText: entry.meaningText,
+      meaning: entry.meaning,
+      context: entry.context,
+    };
+    if (word) {
+      // Needing a hint again means the word is not learned yet.
+      Object.assign(word, { ...fields, meaning: word.meaning || entry.meaning, meaningText: entry.meaningText || word.meaningText, context: entry.context || word.context });
+      if (!word.hintedOn?.includes(today())) {
+        word.hintedOn = [...(word.hintedOn || []), today()].slice(-10);
+        word.streak = 0;
+        word.learned = false;
+      }
+    } else {
+      words.unshift({ ...fields, added: today(), hintedOn: [today()], streak: 0, lastRight: null, learned: false });
+    }
+  }
+  storeNotebook(words);
+}
+
+function recordStudy(surface, knewIt) {
+  const words = loadNotebook();
+  const word = words.find((item) => item.surface === surface);
+  if (!word) return;
+  if (!knewIt) {
+    word.streak = 0;
+    word.learned = false;
+  } else if (word.lastRight !== today()) {
+    // Reading it right twice on the same day counts once: remembering is what counts.
+    word.streak = (word.streak || 0) + 1;
+    word.lastRight = today();
+    word.learned = word.streak >= LEARNED_STREAK;
+  }
+  word.studied = today();
+  storeNotebook(words);
+}
+
+function dueWords() {
+  return loadNotebook().filter((word) => !word.learned);
+}
+
+function updateNotebookTile() {
+  const words = loadNotebook();
+  const due = words.filter((word) => !word.learned).length;
+  $("#notebook-tile").hidden = !words.length;
+  $("#notebook-count").textContent = due ? `복습할 낱말 ${due}개` : "모두 익혔어요!";
+}
+
+function renderNotebook() {
+  stopStudy();
+  $("#report-title").textContent = "낱말 공책";
+  const body = $("#report-body");
+  const words = loadNotebook();
+  if (!words.length) {
+    body.replaceChildren(element("p", "report-note", "아직 모은 낱말이 없어요. 글을 읽다가 힌트를 본 낱말이 여기에 모여요."));
+    return;
+  }
+  const due = words.filter((word) => !word.learned);
+  const learned = words.filter((word) => word.learned);
+  const parts = [element("p", "report-number", "복습할 낱말 ", element("b", "", String(due.length)), "개")];
+  if (due.length) {
+    parts.push(notebookList(due));
+    parts.push(button(`복습하기 (${Math.min(due.length, 10)}개)`, "primary-button wide", () => startStudy(pickReview(due), "notebook")));
+  } else {
+    parts.push(element("p", "study-cheer", "모든 낱말을 익혔어요!"));
+  }
+  if (learned.length) {
+    parts.push(reportGroup("다 익힌 낱말", `${LEARNED_STREAK}번 다른 날에 혼자 읽은 낱말이에요`, learned.map((word) => word.surface), "learned"));
+  }
+  parts.push(element("p", "report-note", "낱말은 이 기기에만 저장돼요. 다른 날 혼자 맞게 읽을 때마다 별이 하나씩 채워져요."));
+  body.replaceChildren(...parts);
+}
+
+function notebookList(words) {
+  const list = element("ul", "notebook-list");
+  list.append(...words.map((word) => {
+    const label = element("span", "notebook-word", word.surface);
+    if (word.pronunciation) label.append(element("small", "", ` [${word.pronunciation}]`));
+    const stars = element("span", "notebook-stars", "★".repeat(word.streak || 0) + "☆".repeat(Math.max(0, LEARNED_STREAK - (word.streak || 0))));
+    stars.setAttribute("aria-label", `${LEARNED_STREAK}번 중 ${word.streak || 0}번 혼자 읽음`);
+    return element("li", "", label, stars);
+  }));
+  return list;
+}
+
+function pickReview(words) {
+  // A short session: words not studied today first, the fewest stars first.
+  return [...words]
+    .sort((a, b) => Number(a.studied === today()) - Number(b.studied === today()) || (a.streak || 0) - (b.streak || 0))
+    .slice(0, 10);
 }
 
 function reportGroup(title, caption, words, chipClass) {
@@ -575,7 +1101,7 @@ function reportGroup(title, caption, words, chipClass) {
 
 function applySettings() {
   const root = document.documentElement.style;
-  root.setProperty("--story-size", `${FONT_SIZES[settings.fontSize] || 24}px`);
+  root.setProperty("--story-size", `${FONT_SIZES[settings.fontSize] || 16}px`);
   root.setProperty("--story-line", String(LINE_GAPS[settings.lineGap] || 2.3));
   root.setProperty("--story-tracking", TRACKING[settings.letterSpacing] || TRACKING.normal);
   document.body.dataset.paper = settings.paper;
@@ -594,6 +1120,7 @@ function updateSetting(key, value) {
   hideCard();
   // Font and spacing changes reflow the text; re-rendering re-measures every hint.
   activeAssist?.handleMessage({ type: "READSEED_UPDATE_SETTINGS", settings: assistSettings() }, () => ({ text: "" }));
+  pdf.pages.forEach((entry) => { if (entry.element.classList.contains("large-text")) fitPage(entry); });
 }
 
 // ---------- Wiring ----------
@@ -647,6 +1174,7 @@ $("#paste-start").addEventListener("click", () => {
   const text = $("#paste-input").value.trim();
   if (text) openText({ title: "붙여 넣은 글", kind: "내 글", text });
 });
+$("#pdf-view").addEventListener("click", () => toggleLargeText().catch(reportError));
 $("#zoom-in").addEventListener("click", () => changeZoom(1).catch(reportError));
 $("#zoom-out").addEventListener("click", () => changeZoom(-1).catch(reportError));
 $("#hint-more").addEventListener("click", () => {
@@ -668,6 +1196,7 @@ $("#guide-reading").addEventListener("click", () => {
   else setStatus("한 낱말씩 읽을 글자를 찾지 못했어요");
 });
 $("#finish-reading").addEventListener("click", () => {
+  stopStudy();
   renderReport();
   openDialog($("#report"));
 });
@@ -691,6 +1220,11 @@ document.addEventListener("click", (event) => {
 });
 window.addEventListener("scroll", hideCard, { passive: true });
 pdfSection.addEventListener("scroll", hideCard, { passive: true });
+portrait.addEventListener("change", updateRotateHint);
+$("#rotate-dismiss").addEventListener("click", () => {
+  pdf.portraitOk = true;
+  updateRotateHint();
+});
 let lastWidth = window.innerWidth;
 window.addEventListener("resize", () => {
   // iPad Safari also fires resize when its toolbar collapses on scroll; only a
@@ -705,6 +1239,11 @@ window.addEventListener("resize", () => {
 });
 
 renderSamples();
+updateNotebookTile();
+$("#notebook-open").addEventListener("click", () => {
+  renderNotebook();
+  openDialog($("#report"));
+});
 applySettings();
 showServerStatus();
 if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));

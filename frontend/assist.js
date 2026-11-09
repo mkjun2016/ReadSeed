@@ -233,6 +233,7 @@
       const rect = Array.from(hits[0].range.getClientRects()).find((item) => item.width && item.height);
       return {
         rect,
+        range: hits[0].range,
         word: hits[0].word,
         surface: hits[0].word?.표기 || hits[0].range.toString(),
         pronunciation: hits.find((entry) => entry.kind === "above")?.word?.발음 || null,
