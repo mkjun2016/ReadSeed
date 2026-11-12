@@ -234,12 +234,12 @@ def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict
     return [by_index.get(item_index) for item_index, _, _, _ in items]
 
 
-def select(sentence: str, word: str, pos: str, candidates: list[dict]) -> Selection:
+def select(sentence: str, word: str, pos: str, candidates: list[dict], use_llm: bool = True) -> Selection:
     """문맥으로 후보 하나를 선택한다. 단일 호출 API는 배치 구현을 재사용한다."""
-    return select_many(sentence, [(word, pos, candidates)])[0]
+    return select_many(sentence, [(word, pos, candidates)], use_llm=use_llm)[0]
 
 
-def select_many(sentence: str, items: list[tuple[str, str, list[dict]]]) -> list[Selection]:
+def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm: bool = True) -> list[Selection]:
     """한 문장의 모든 단어를 최대 한 번의 LLM 요청으로 선택한다."""
     results: list[Optional[Selection]] = [None] * len(items)
     unresolved: list[tuple[int, str, str, list[dict], str]] = []
@@ -249,8 +249,13 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]]) -> list
             results[item_index] = rule_result
             continue
         usable = _usable_candidates(candidates)[:MAX_CANDIDATES_PER_WORD]
-        if not _llm_configured():
-            results[item_index] = Selection(None, "llm_not_configured")
+        if not use_llm or not _llm_configured():
+            # 보호자가 AI 사용을 끄거나 키가 없으면 문장을 밖으로 보내지 않는다.
+            # 뜻이 하나뿐인 고급어처럼 규칙만으로 확실한 경우만 보여 준다.
+            if rule_result.candidate or rule_result.reason != "ambiguous":
+                results[item_index] = rule_result
+            else:
+                results[item_index] = Selection(None, "llm_off" if not use_llm else "llm_not_configured")
             continue
         key = _fingerprint(sentence, word, pos, usable)
         cached = _selection_cache.get(key) or _load_persistent(key, usable)

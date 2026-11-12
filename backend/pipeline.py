@@ -20,12 +20,15 @@ from kiwipiepy import Kiwi
 
 import dict_lookup
 import gloss_selector
+import numerals
 import phonology_rules
 
 g2p = G2p()
 kiwi = Kiwi()
 
 _CONTENT_TAGS = {"NNG", "XR"}  # NNP(고유명사)는 프로젝트 원칙상 풀이를 붙이지 않는다.
+# 동사·형용사는 형태소 분석이 어간만 돌려주므로(지켜→지키) 사전 표제어(지키다)로 되돌려 찾는다.
+_PREDICATE_TAGS = {"VV", "VA"}
 _gloss_cache: dict[tuple[str, str, str], list[dict]] = {}
 
 
@@ -33,7 +36,18 @@ def _format_gloss(selected: gloss_selector.Selection) -> list[dict]:
     if not selected.candidate:
         return []
     entry = selected.candidate
-    return [{"출처": "한국어기초사전", "표제어": entry["표제어"], "품사": entry["품사"], "뜻풀이": entry["뜻풀이"]}]
+    return [{
+        "출처": "한국어기초사전",
+        "표제어": entry["표제어"],
+        "품사": entry["품사"],
+        "뜻풀이": entry["뜻풀이"],
+        # 근거: 어느 사전 항목인지, 왜 이 뜻을 골랐는지(규칙/AI 선택과 확신도)
+        "근거": {"사전ID": entry.get("_local_id"), "선택": selected.reason, "확신도": selected.confidence},
+    }]
+
+
+def _lemma_of(form: str, tag: str) -> str:
+    return form + "다" if tag in _PREDICATE_TAGS else form
 
 
 def _lookup_gloss(sentence: str, word: str, tag: str) -> list[dict]:
@@ -55,7 +69,28 @@ def _word_spans(sentence: str) -> list[tuple[int, int]]:
     return [(m.start(), m.end()) for m in re.finditer(r"\S+", sentence)]
 
 
-def annotate_sentence(sentence: str) -> list[dict]:
+_REASON_TEXT = {
+    "proper_noun": "고유명사라 풀이하지 않음",
+    "beginner_or_nonlocal": "초급어이거나 기초사전에 없음 → 표시 안 함",
+    "ambiguous": "뜻이 여러 개라 규칙만으로는 고를 수 없음",
+    "not_advanced_without_llm": "고급어가 아님",
+    "single_sense": "뜻이 하나뿐인 고급어 → 규칙으로 표시",
+    "llm_selected": "AI가 후보 중 문맥에 맞는 뜻을 고름",
+    "llm_uncertain": "AI 확신이 기준(0.75) 미만 → 표시 안 함",
+    "llm_budget_limited": "문장당 3낱말 한도 → 표시 안 함",
+    "llm_not_configured": "AI 미설정 → 다의어는 표시 안 함",
+    "llm_off": "보호자가 AI를 끔 → 다의어는 표시 안 함",
+}
+
+
+def explain_sentence(sentence: str, use_llm: bool = True) -> dict:
+    """한 문장이 처리된 과정을 단계별로 돌려준다(도구 호출·조건 분기·실패 처리 기록)."""
+    trace: list[dict] = []
+    annotations = annotate_sentence(sentence, use_llm=use_llm, trace=trace)
+    return {"annotations": annotations, "trace": trace}
+
+
+def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = None) -> list[dict]:
     """문장 하나를 어절 단위로 분석해 주석 후보 리스트를 반환.
 
     형태소 분석(Kiwi)은 문장 전체를 한 번에 넣는다. 어절 하나만 따로 넣으면 문맥이
@@ -84,10 +119,24 @@ def annotate_sentence(sentence: str) -> list[dict]:
                 morphs_by_word[i].append((t.form, t.tag))
                 break
 
+    log = trace.append if trace is not None else (lambda _event: None)
+    log({"단계": "형태소 분석", "도구": "Kiwi", "결과": [f"{form}/{tag}" for morphs in morphs_by_word for form, tag in morphs]})
+
     results = []
     sentence_gloss_inputs: list[tuple[int, str, str, list[dict]]] = []
     for (start, end), morphs in zip(spans, morphs_by_word):
         eojeol = sentence[start:end]
+        token = eojeol.strip("\"'“”‘’()[]{}<>.,!?;:·…~")
+        number = numerals.read(token) if re.match(r"\d", token) else None
+        if number:
+            # 숫자는 단위에 따라 고유어/한자어로 읽는다(3마리[세 마리], 3학년[삼 학년]).
+            results.append({
+                "어절": eojeol, "표기": token, "발음": number["읽기"], "다름": True, "유형": "숫자 읽기",
+                "신뢰": True, "형태소": morphs, "뜻풀이후보": [],
+                "근거": {"발음": {"숫자": f"{number['수']} 수 + 단위 ‘{number['단위']}’"}},
+            })
+            log({"단계": "숫자 읽기", "도구": "단위 명사 규칙", "어절": token, "발음": number["읽기"], "판단": f"{number['수']} 수로 읽음"})
+            continue
         clean = re.sub(r"[^가-힣]", "", eojeol)
         if not clean:
             continue
@@ -95,6 +144,13 @@ def annotate_sentence(sentence: str) -> list[dict]:
         # 발음은 어절만 따로 (연음 등은 조사·어미까지 붙어야 정확히 계산되지만, 문장
         # 전체를 넣으면 다른 어절로 규칙이 새어나간다)
         p = phonology_rules.classify(clean, g2p)
+        pronunciation_basis = p.get("근거") or ({"표준발음법": [r for r in p.get("조항", []) if r != "idiom"]} if p.get("조항") else None)
+        if p["다름"]:
+            route = "사전 발음(한국어기초사전)" if p.get("근거") else ("규칙(표준발음법)" if p["신뢰"] else "규칙 추적 불일치")
+            log({
+                "단계": "발음", "도구": route, "어절": clean, "발음": p["발음"], "유형": p["유형"],
+                "판단": "표시" if p["신뢰"] else "확신 낮음 → 표시 안 함",
+            })
 
         results.append(
             {
@@ -106,21 +162,35 @@ def annotate_sentence(sentence: str) -> list[dict]:
                 "신뢰": p["신뢰"],
                 "형태소": morphs,
                 "뜻풀이후보": [],
+                "근거": {"발음": pronunciation_basis},
             }
         )
         result_index = len(results) - 1
         for form, tag in morphs:
-            if tag in _CONTENT_TAGS:
-                sentence_gloss_inputs.append((result_index, form, tag, dict_lookup.lookup(form)))
+            if tag in _CONTENT_TAGS or (tag in _PREDICATE_TAGS and len(form) >= 2):
+                lemma = _lemma_of(form, tag)
+                entries = dict_lookup.lookup(lemma)
+                sentence_gloss_inputs.append((result_index, lemma, tag, entries))
+                log({"단계": "사전 조회", "도구": "기초사전 SQLite → (없으면) 우리말샘 API", "표제어": lemma, "후보": len(entries)})
 
     # LLM은 어절마다 호출하지 않는다. 문장 전체 후보를 한 번에 선택해 비용·지연을
     # 제한하고, 결과만 원래 어절 위치에 돌려놓는다.
     selections = gloss_selector.select_many(
         sentence,
         [(word, tag, entries) for _, word, tag, entries in sentence_gloss_inputs],
+        use_llm=use_llm,
     )
-    for (result_index, _, _, _), selected in zip(sentence_gloss_inputs, selections):
+    called = [s for s in selections if s.reason in ("llm_selected", "llm_uncertain")]
+    if called:
+        log({"단계": "AI 문맥 선택", "도구": "Claude (후보 번호만 고름, 원문 미저장 캐시)", "낱말": len(called)})
+    for (result_index, lemma, _, entries), selected in zip(sentence_gloss_inputs, selections):
         results[result_index]["뜻풀이후보"].extend(_format_gloss(selected))
+        if entries:
+            log({
+                "단계": "뜻 결정", "표제어": lemma, "판단": _REASON_TEXT.get(selected.reason, selected.reason),
+                "확신도": round(selected.confidence, 2) if selected.confidence else None,
+                "표시": bool(selected.candidate),
+            })
     return results
 
 

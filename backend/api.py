@@ -18,8 +18,12 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parent.parent
 
 
+MAX_SENTENCE_CHARS = 1000
+
+
 class AnnotateRequest(BaseModel):
     sentence: str = Field(..., min_length=1, description="분석할 문장")
+    use_llm: bool = Field(True, description="False면 문장을 외부 AI로 보내지 않고 규칙만 쓴다")
 
 
 class PageLine(BaseModel):
@@ -53,6 +57,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def revalidate_static_files(request: Request, call_next):
+    # 태블릿 Safari가 예전 app.js를 캐시에서 계속 쓰지 않도록, 웹앱 파일은 매번
+    # ETag로 확인만 하게 한다(바뀌지 않았으면 304로 가볍게 끝난다).
+    response = await call_next(request)
+    if request.url.path.startswith(("/app", "/shared")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -64,13 +78,15 @@ def annotate(request: AnnotateRequest) -> list[dict[str, Any]]:
     sentence = request.sentence.strip()
     if not sentence:
         raise HTTPException(status_code=422, detail="sentence must not be empty")
+    if len(sentence) > MAX_SENTENCE_CHARS:
+        raise HTTPException(status_code=413, detail=f"sentence is longer than {MAX_SENTENCE_CHARS} characters")
 
     try:
         # Import lazily so /health can still be used when an analysis
         # dependency or API key has not been configured yet.
         from pipeline import annotate_sentence
 
-        return annotate_sentence(sentence)
+        return annotate_sentence(sentence) if request.use_llm else annotate_sentence(sentence, use_llm=False)
     except (KeyError, RuntimeError) as exc:
         # Missing dictionary API keys are configuration errors, not server
         # crashes. The lookup modules raise RuntimeError for missing keys.
@@ -82,6 +98,19 @@ def annotate(request: AnnotateRequest) -> list[dict[str, Any]]:
     except Exception as exc:
         # Keep the process alive for unexpected per-request failures.
         raise HTTPException(status_code=500, detail="annotation failed") from exc
+
+
+@app.post("/explain")
+def explain(request: AnnotateRequest) -> dict[str, Any]:
+    """문장 하나의 처리 과정(도구·분기·판단 근거)을 단계별로 보여준다."""
+    sentence = request.sentence.strip()
+    if not sentence:
+        raise HTTPException(status_code=422, detail="sentence must not be empty")
+    if len(sentence) > MAX_SENTENCE_CHARS:
+        raise HTTPException(status_code=413, detail=f"sentence is longer than {MAX_SENTENCE_CHARS} characters")
+    from pipeline import explain_sentence
+
+    return explain_sentence(sentence, use_llm=request.use_llm)
 
 
 @app.post("/key-info")
@@ -98,6 +127,8 @@ async def ocr_page(request: Request) -> dict[str, list[dict[str, Any]]]:
     import ocr
 
     image = await request.body()
+    if not image:
+        raise HTTPException(status_code=422, detail="empty image")
     try:
         return {"lines": await run_in_threadpool(ocr.recognize, image)}
     except ValueError as exc:

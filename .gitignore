@@ -8,3 +8,7 @@ NIKL_MP_2025_v1.0/
 backend/data/dict/
 backend/data/gloss_decisions.sqlite3
 backend/data/key_sentence_decisions.sqlite3
+# 원본 데이터에서 다시 만들 수 있는 평가 산출물과 말뭉치 문장(재배포 제한)이 든 라벨링 시트
+backend/data/krdict_pronunciation.jsonl
+backend/results/
+backend/labeling/

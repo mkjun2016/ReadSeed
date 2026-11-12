@@ -132,7 +132,16 @@ def _entry_rows(entry: dict) -> Optional[Tuple[tuple, List[tuple]]]:
         return None
 
     entry_features = _features(entry.get("feat"))
-    word_form_features = _child_features(entry.get("WordForm"))
+    # WordForm에는 표제어 발음(type=발음)과 활용형(type=활용, 예: 첨탑이[첨타비])이 섞여
+    # 있다. 전부 합치면 마지막 활용형 발음이 표제어 발음을 덮어쓰므로 발음 항목만 쓴다.
+    word_form_features = next(
+        (
+            _features(form.get("feat"))
+            for form in _as_list(entry.get("WordForm"))
+            if isinstance(form, dict) and _features(form.get("feat")).get("type") == "발음"
+        ),
+        {},
+    )
     entry_id = str(entry.get("val") or entry.get("att") or "")
     if not entry_id:
         return None

@@ -9,6 +9,17 @@ const { create, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
 const SETTINGS_KEY = "readseedWebSettings";
 const GUIDE_KEY = "readseedWebGuideSeen";
 const NOTEBOOK_KEY = "readseedWebNotebook";
+const CONSENT_KEY = "readseedWebConsent";
+const FEEDBACK_KEY = "readseedWebHintReports";
+// Anonymous reading sessions on this device (no text, no names) for usability tests.
+const SESSIONS_KEY = "readseedWebSessions";
+let readingStarted = 0;
+let readingTitle = "";
+// Words the child has not seen for this long are removed from the device.
+const RETENTION_DAYS = 90;
+// Longer pastes are cut so the device and server stay responsive; the child is told.
+const MAX_TEXT_CHARS = 20_000;
+const MAX_PDF_BYTES = 100 * 1024 * 1024;
 // A word is learned once it is read right, alone, on this many different days in a row.
 const LEARNED_STREAK = 3;
 const NOTEBOOK_LIMIT = 300;
@@ -21,6 +32,19 @@ const DEFAULT_SETTINGS = {
   pronunciation: true,
   gloss: true,
   readingSpeed: "slow",
+  useAI: true,
+  hintAmount: "some",
+  adapt: true,
+};
+// Per-child hint tuning from the word notebook (all on this device).
+const STRUGGLE_ACTIVE = 3; // this many unlearned words of one sound change → always show it
+const MASTERED_LEARNED = 3; // this many learned words and none pending → stop showing it
+// How many sound changes get a hint. Predictable ones (받침이 대표음으로, 모음 변이) are
+// dropped first so the page is not covered in underlines ("막히는 지점에만").
+const HINT_TYPES = {
+  many: null,
+  some: new Set(["연음", "경음화", "구개음화", "비음화", "유음화", "격음화", "ㄴ첨가", "ㅎ탈락", "어휘적예외", "숫자 읽기"]),
+  few: new Set(["구개음화", "비음화", "유음화", "격음화", "ㄴ첨가", "어휘적예외", "숫자 읽기"]),
 };
 // Reading text sizes in CSS px, which equal iOS points on iPad; 16pt is the default.
 const FONT_SIZES = { 1: 16, 2: 20, 3: 24, 4: 28 };
@@ -125,6 +149,28 @@ async function checkServer() {
   } finally { clearTimeout(timeout); }
 }
 
+// ---------- Privacy: mask personal numbers before anything leaves the device ----------
+const PERSONAL_PATTERNS = [
+  /\b\d{6}[-\s]?[1-4]\d{6}\b/g, // 주민등록번호
+  /\b01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}\b/g, // 휴대전화
+  /\b0\d{1,2}[-\s.]\d{3,4}[-\s.]\d{4}\b/g, // 일반 전화
+  /[\w.+-]+@[\w-]+\.[\w.-]+/g, // 이메일
+  /\b\d{4}[-\s]\d{4}[-\s]\d{4}[-\s]\d{4}\b/g, // 카드 번호
+];
+let maskedCount = 0;
+let lastCardWord = null;
+
+function maskPersonalInfo(text) {
+  let masked = text;
+  for (const pattern of PERSONAL_PATTERNS) {
+    masked = masked.replace(pattern, (match) => {
+      maskedCount += 1;
+      return "○".repeat(match.length);
+    });
+  }
+  return masked;
+}
+
 async function annotateSentence(sentence) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -132,7 +178,8 @@ async function annotateSentence(sentence) {
     const response = await fetch("/annotate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentence }),
+      // Analysis only reads Korean words, so masked numbers change no hint.
+      body: JSON.stringify({ sentence: maskPersonalInfo(sentence), use_llm: Boolean(settings.useAI) }),
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
@@ -169,16 +216,94 @@ function setStatus(text) {
   dockStatus.textContent = text;
 }
 
-function reportResult(summary, failed) {
+function reportResult(summary, failed, results = []) {
   if (failed && !summary.pronunciation && !summary.gloss) {
-    setStatus("힌트를 가져오지 못했어요. 서버가 켜져 있는지 확인해 주세요.");
+    const tooLong = results.some((result) => /longer than/.test(result?.error || ""));
+    setStatus(tooLong ? "문장이 너무 길어서 힌트를 만들지 못했어요. 문장을 나눠 주세요." : "힌트 서버에 연결하지 못했어요. 서버가 켜져 있는지 확인한 뒤 다시 열어 주세요.");
     return;
   }
   const parts = [];
   if (settings.pronunciation) parts.push(`읽는 법 ${summary.pronunciation}`);
   if (settings.gloss) parts.push(`쉬운 뜻 ${summary.gloss}`);
   const how = settings.reveal === "tap" ? "밑줄 친 낱말을 눌러 보세요" : "낱말을 누르면 크게 볼 수 있어요";
-  setStatus(summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요");
+  const privacy = maskedCount ? ` · 개인정보로 보이는 ${maskedCount}곳은 가리고 보냈어요` : "";
+  const partial = failed ? ` · ${failed}문장은 힌트를 못 만들었어요` : "";
+  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial + adaptationNote() + difficultyNote(results) + privacy);
+}
+
+// State changes what the child sees: a word read right on three days needs no hint,
+// and a hint the child or teacher reported as wrong is not shown again on this device.
+function hiddenWords() {
+  const hidden = new Set(loadNotebook().filter((word) => word.learned).map((word) => word.surface));
+  for (const report of loadReports()) hidden.add(report.surface);
+  return hidden;
+}
+
+// What this child finds hard, from the notebook: per sound-change type, how many words
+// are still being learned, how many were learned, and how many were missed in review.
+function learnerProfile() {
+  const byType = new Map();
+  for (const word of loadNotebook()) {
+    if (!word.type || !word.pronunciation) continue;
+    const row = byType.get(word.type) || { type: word.type, active: 0, learned: 0, missed: 0, examples: [] };
+    if (word.learned) row.learned += 1;
+    else {
+      row.active += 1;
+      if (word.studied && !word.streak) row.missed += 1; // studied but not read alone yet
+      if (row.examples.length < 3) row.examples.push(word.surface);
+    }
+    byType.set(word.type, row);
+  }
+  const rows = [...byType.values()];
+  return {
+    rows,
+    struggling: new Set(rows.filter((row) => row.active >= STRUGGLE_ACTIVE || (row.active >= 2 && row.missed >= 1)).map((row) => row.type)),
+    mastered: new Set(rows.filter((row) => row.learned >= MASTERED_LEARNED && row.active === 0).map((row) => row.type)),
+  };
+}
+
+// Decide per word whether its pronunciation hint is shown. The base is the chosen hint
+// amount; with "아이에게 맞춰" on, sound changes this child keeps missing are always
+// shown and ones the child has learned are dropped. Each decision is kept on the word
+// (맞춤) so the hint card can say why.
+function withState(results) {
+  const hidden = hiddenWords();
+  const allowed = HINT_TYPES[settings.hintAmount] || null;
+  const profile = settings.adapt ? learnerProfile() : { struggling: new Set(), mastered: new Set() };
+  return results.map((result) => (!result?.ok ? result : {
+    ...result,
+    annotations: result.annotations.map((word) => {
+      if (hidden.has(word.표기)) return { ...word, 다름: false, 뜻풀이후보: [] };
+      if (!word.다름) return word;
+      if (profile.struggling.has(word.유형)) return { ...word, 맞춤: "struggle" };
+      if (profile.mastered.has(word.유형)) return { ...word, 다름: false, 맞춤: "mastered" };
+      if (allowed && !allowed.has(word.유형)) return { ...word, 다름: false };
+      return word;
+    }),
+  }));
+}
+
+// Korean particle by final consonant: josa("경음화", "은", "는") → "경음화는".
+function josa(word, withCoda, withoutCoda) {
+  const code = (word || "").charCodeAt(word.length - 1) - 0xac00;
+  return word + (code >= 0 && code < 11172 && code % 28 ? withCoda : withoutCoda);
+}
+
+function adaptationNote() {
+  if (!settings.adapt) return "";
+  const { struggling, mastered } = learnerProfile();
+  const parts = [];
+  if (struggling.size) parts.push(`${[...struggling].join("·")} 힌트를 더 보여 줘요`);
+  if (mastered.size) parts.push(`익힌 ${josa([...mastered].join("·"), "은", "는")} 줄였어요`);
+  return parts.length ? ` · 맞춤: ${parts.join(", ")}` : "";
+}
+
+function difficultyNote(results) {
+  // A reference sign only: many advanced words suggests text above grades 3–4.
+  const words = results.filter((result) => result?.ok).flatMap((result) => result.annotations);
+  if (words.length < 30) return "";
+  const hard = words.filter((word) => word.뜻풀이후보?.length).length / words.length;
+  return hard >= 0.12 ? " · 참고: 3~4학년 글보다 어려운 낱말이 많아요" : "";
 }
 
 async function analyze(assist, sentences, cacheKey, cache, isCurrent) {
@@ -188,13 +313,13 @@ async function analyze(assist, sentences, cacheKey, cache, isCurrent) {
     results = await annotateAll(sentences, (partial) => {
       if (!isCurrent()) return;
       setStatus(`힌트를 준비하고 있어요… ${partial.length}/${sentences.length}`);
-      assist.renderAssistance(partial, assistSettings());
+      assist.renderAssistance(withState(partial), assistSettings());
     });
     if (results.some((result) => result.ok)) cache.set(cacheKey, results);
   }
   if (!isCurrent()) return;
-  const summary = assist.renderAssistance(results, assistSettings());
-  reportResult(summary, results.filter((result) => !result.ok).length);
+  const summary = assist.renderAssistance(withState(results), assistSettings());
+  reportResult(summary, results.filter((result) => !result.ok).length, results);
 }
 
 // ---------- Views ----------
@@ -223,6 +348,9 @@ function leaveReader() {
 
 function startReading(title) {
   run += 1;
+  maskedCount = 0;
+  readingStarted = Date.now();
+  readingTitle = title;
   taps = new Map();
   textAssist.clearOverlay();
   pdfAssist.clearOverlay();
@@ -235,6 +363,16 @@ function startReading(title) {
 }
 
 // ---------- Text reading ----------
+
+const DIAGNOSIS_QUESTION = /(난독|학습\s*장애|ADHD|발달\s*장애|지능).{0,20}(인가요|일까요|맞나요|맞아요|아닌가요|진단|검사|판정|\?)/;
+
+function checkText(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return { error: "읽을 글이 비어 있어요. 글을 붙여 넣어 주세요." };
+  const hangul = (trimmed.match(/[가-힣]/g) || []).length;
+  if (hangul / trimmed.replace(/\s/g, "").length < 0.2) return { error: "한국어 글이 아니라서 힌트를 만들 수 없어요. 한국어 글을 넣어 주세요." };
+  return { text: trimmed.length > MAX_TEXT_CHARS ? trimmed.slice(0, MAX_TEXT_CHARS) : trimmed, cut: trimmed.length > MAX_TEXT_CHARS };
+}
 
 function openText({ title, kind = "", text }) {
   const thisRun = startReading(title);
@@ -253,8 +391,13 @@ function openText({ title, kind = "", text }) {
     return paragraph;
   }));
   textAssist.setTarget(storyBody, null);
-  const sentences = splitSentences(text).slice(0, MAX_SENTENCES);
-  analyze(textAssist, sentences, text, textCache, () => run === thisRun).catch(reportError);
+  const all = splitSentences(text);
+  const sentences = all.slice(0, MAX_SENTENCES);
+  analyze(textAssist, sentences, text, textCache, () => run === thisRun)
+    .then(() => {
+      if (run === thisRun && all.length > MAX_SENTENCES) setStatus(`${dockStatus.textContent} · 앞 ${MAX_SENTENCES}문장까지 힌트를 만들었어요`);
+    })
+    .catch(reportError);
 }
 
 // ---------- PDF reading ----------
@@ -297,8 +440,29 @@ function updateRotateHint() {
   $("#rotate-hint").hidden = !(mode === "pdf" && pdf.spread && portrait.matches && !pdf.portraitOk);
 }
 
+async function pdfProblem(file) {
+  if (!file.size) return "빈 파일이에요. 다른 PDF를 골라 주세요.";
+  if (file.size > MAX_PDF_BYTES) return "파일이 너무 커요(100MB 넘음). 필요한 쪽만 따로 저장해 주세요.";
+  const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
+  if (String.fromCharCode(...head) !== "%PDF-") return "PDF 파일이 아니에요. 사진이나 문서라면 PDF로 저장해서 올려 주세요.";
+  return null;
+}
+
+function pdfOpenError(error) {
+  if (error?.name === "PasswordException") return "암호가 걸린 PDF라 열 수 없어요. 암호를 푼 파일로 올려 주세요.";
+  if (error?.name === "InvalidPDFException") return "PDF가 손상되어 열 수 없어요. 다시 저장한 파일로 올려 주세요.";
+  return "이 PDF를 열지 못했어요. 다른 파일을 골라 주세요.";
+}
+
 async function openPdf(file) {
   if (!file) return;
+  const problem = await pdfProblem(file);
+  if (problem) {
+    const status = $("#server-status");
+    status.classList.add("error");
+    status.textContent = problem;
+    return;
+  }
   const thisRun = startReading(file.name.replace(/\.pdf$/i, ""));
   closePdf();
   mode = "pdf";
@@ -336,7 +500,7 @@ async function openPdf(file) {
     setStatus("읽을 쪽을 펴면 힌트를 준비해요");
   } catch (error) {
     console.error("[ReadSeed]", error);
-    setStatus("이 PDF를 열지 못했어요. 다른 파일을 골라 주세요.");
+    setStatus(pdfOpenError(error));
   }
 }
 
@@ -508,7 +672,7 @@ async function ocrLines(entry) {
     const image = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
     const response = await fetch("/ocr", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: image });
     const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.detail || `OCR 실패 (${response.status})`);
+    if (!response.ok) throw Object.assign(new Error(payload?.detail || `OCR 실패 (${response.status})`), { status: response.status });
     return payload.lines;
   } finally {
     canvas.width = 0;
@@ -612,7 +776,11 @@ async function analyzePdfPage(entry) {
     layout = await pageLayout(entry);
   } catch (error) {
     console.error("[ReadSeed]", error);
-    if (isCurrent()) setStatus(`${entry.number}쪽 글자를 읽지 못했어요.`);
+    if (isCurrent()) {
+      setStatus(error.status === 503
+        ? "이 서버에서는 그림 속 글자를 읽을 수 없어요(macOS 서버에서만 돼요). 원래 쪽으로 보여 드릴게요."
+        : `${entry.number}쪽 글자를 읽지 못했어요. 다음 쪽으로 넘기거나 다시 열어 주세요.`);
+    }
     return;
   }
   if (!isCurrent()) return;
@@ -715,9 +883,36 @@ function showCard(info) {
   meaningElement.hidden = !meaning || Boolean(info.pronunciation);
   $("#hint-more").hidden = !meaning || !info.pronunciation;
 
+  const basis = $("#hint-basis");
+  basis.textContent = basisText(info, candidate);
+  basis.hidden = !basis.textContent;
+  card.dataset.surface = info.surface;
+  lastCardWord = info.word;
+  card.dataset.pronunciation = info.pronunciation || "";
+
   card.hidden = false;
   placeCard(info.rect);
   logTap(info, meaning, meaning && !info.pronunciation);
+}
+
+// Where the hint comes from, in plain words for a teacher or parent reading along.
+function basisText(info, candidate) {
+  const parts = [];
+  const sound = info.word?.근거?.발음;
+  if (info.pronunciation && sound?.출처) parts.push(`읽는 법: ${sound.출처} ‘${sound.표제어}’`);
+  else if (info.pronunciation && sound?.표준발음법?.length) parts.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
+  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : "뜻: 한국어기초사전");
+  const why = info.word?.맞춤 === "struggle" ? ` · 자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
+  return parts.length ? `근거 — ${parts.join(" / ")}${why}` : "";
+}
+
+function loadReports() {
+  try {
+    const reports = JSON.parse(readStorage(FEEDBACK_KEY) || "[]");
+    return Array.isArray(reports) ? reports : [];
+  } catch (_error) {
+    return [];
+  }
 }
 
 function placeCard(rect) {
@@ -810,6 +1005,18 @@ function renderReport() {
   }
   const note = document.createElement("p");
   note.className = "report-note";
+  const profile = learnerProfile();
+  if (settings.adapt && (profile.struggling.size || profile.mastered.size)) {
+    const lines = [];
+    for (const row of profile.rows.filter((row) => profile.struggling.has(row.type))) {
+      lines.push(`자주 막힌 소리 · ${row.type} (${row.active}낱말: ${row.examples.join(", ")}) → 다음 글에서 힌트를 꼭 보여 줘요`);
+    }
+    for (const row of profile.rows.filter((row) => profile.mastered.has(row.type))) {
+      lines.push(`익힌 소리 · ${row.type} (${row.learned}낱말 익힘) → 힌트를 줄여요`);
+    }
+    parts.push(reportGroup("다음 읽기에 맞춘 힌트", "낱말 공책 기록으로 정해요. 설정에서 끌 수 있어요.", lines, "adapt"));
+  }
+  parts.push(element("p", "report-note", "이 기록은 읽기를 돕기 위한 참고 기록이에요. 난독증 같은 진단이 아니에요."));
   note.textContent = "힌트를 본 낱말을 혼자 읽어 보며 한 번 더 익혀요.";
   parts.push(note, button(`낱말 공부하기 (${entries.length}개)`, "primary-button wide", () => startStudy(entries)));
   body.replaceChildren(...parts);
@@ -917,6 +1124,12 @@ function nextStudyCard(knewIt) {
 function renderStudyEnd() {
   const body = $("#report-body");
   const firstTry = study.firstTry.size;
+  const sessions = loadSessions();
+  if (sessions.length) {
+    sessions[sessions.length - 1].studied = study.total;
+    sessions[sessions.length - 1].readAloneFirstTry = firstTry;
+    writeStorage(SESSIONS_KEY, JSON.stringify(sessions));
+  }
   const message = element("p", "report-number", "처음부터 혼자 읽은 낱말 ", element("b", "", String(firstTry)), `개 / ${study.total}개`);
   const parts = [element("p", "study-cheer", firstTry === study.total ? "모두 혼자 읽었어요. 정말 잘했어요!" : "끝까지 공부했어요. 잘했어요!"), message];
   const learned = study.entries.filter((entry) => notebookEntry(entry.surface)?.learned && study.firstTry.has(entry.surface));
@@ -953,10 +1166,17 @@ function today() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+function lastSeen(word) {
+  return [word.studied, ...(word.hintedOn || []), word.added].filter(Boolean).sort().pop() || "";
+}
+
 function loadNotebook() {
   try {
     const words = JSON.parse(readStorage(NOTEBOOK_KEY) || "[]");
-    return Array.isArray(words) ? words.filter((word) => word && typeof word.surface === "string") : [];
+    if (!Array.isArray(words)) return [];
+    const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10);
+    // Retention: words not seen for RETENTION_DAYS are dropped from the device.
+    return words.filter((word) => word && typeof word.surface === "string" && lastSeen(word) >= cutoff);
   } catch (_error) {
     return [];
   }
@@ -1121,6 +1341,7 @@ function updateSetting(key, value) {
   // Font and spacing changes reflow the text; re-rendering re-measures every hint.
   activeAssist?.handleMessage({ type: "READSEED_UPDATE_SETTINGS", settings: assistSettings() }, () => ({ text: "" }));
   pdf.pages.forEach((entry) => { if (entry.element.classList.contains("large-text")) fitPage(entry); });
+  if (key === "hintAmount" || key === "adapt") rerender();
 }
 
 // ---------- Wiring ----------
@@ -1171,9 +1392,132 @@ $("#pdf-input").addEventListener("change", (event) => {
   event.target.value = "";
 });
 $("#paste-start").addEventListener("click", () => {
-  const text = $("#paste-input").value.trim();
-  if (text) openText({ title: "붙여 넣은 글", kind: "내 글", text });
+  const raw = $("#paste-input").value;
+  const checked = checkText(raw);
+  const status = $("#server-status");
+  if (checked.error) {
+    status.classList.add("error");
+    status.textContent = checked.error;
+    return;
+  }
+  status.textContent = "";
+  // Safety line: a question asking for a diagnosis gets a plain answer, not a judgement.
+  if (DIAGNOSIS_QUESTION.test(checked.text)) $("#safety-card").hidden = false;
+  openText({ title: "붙여 넣은 글", kind: checked.cut ? `내 글 · 앞 ${MAX_TEXT_CHARS.toLocaleString()}자` : "내 글", text: checked.text });
 });
+$("#safety-close").addEventListener("click", () => { $("#safety-card").hidden = true; });
+function sentenceOf(word) {
+  const caches = [...textCache.values(), ...pdf.cache.values()];
+  for (const results of caches) {
+    for (const result of results || []) {
+      if (result?.ok && result.annotations.some((item) => item === word || (item.어절 === word?.어절 && item.표기 === word?.표기))) return result.sentence;
+    }
+  }
+  return null;
+}
+
+function describeStep(step) {
+  const head = [step.단계, step.어절 || step.표제어].filter(Boolean).join(" · ");
+  const detail = [
+    step.도구 && `도구: ${step.도구}`,
+    step.발음 && `[${step.발음}] ${step.유형 || ""}`,
+    step.후보 !== undefined && `사전 후보 ${step.후보}개`,
+    step.판단,
+    step.확신도 && `확신도 ${step.확신도}`,
+    step.낱말 && `${step.낱말}낱말을 한 번에 물어봄`,
+    step.결과 && step.결과.join(" "),
+  ].filter(Boolean).join(" · ");
+  return { head, detail };
+}
+
+$("#hint-why").addEventListener("click", async () => {
+  const sentence = sentenceOf(lastCardWord);
+  if (!sentence) return;
+  hideCard();
+  $("#trace-sentence").textContent = sentence;
+  $("#trace-steps").replaceChildren(element("li", "", "작동 기록을 불러오는 중이에요…"));
+  openDialog($("#trace"));
+  try {
+    const response = await fetch("/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentence: maskPersonalInfo(sentence), use_llm: Boolean(settings.useAI) }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.detail || response.status);
+    const surface = lastCardWord?.표기;
+    $("#trace-steps").replaceChildren(...payload.trace.map((step) => {
+      const { head, detail } = describeStep(step);
+      const item = element("li", step.어절 === surface || (surface && step.표제어 && surface.startsWith(step.표제어.replace(/다$/, ""))) ? "focus" : "", head);
+      item.append(element("small", "", detail));
+      return item;
+    }));
+  } catch (error) {
+    $("#trace-steps").replaceChildren(element("li", "", `작동 기록을 불러오지 못했어요 (${error.message}).`));
+  }
+});
+
+$("#hint-report").addEventListener("click", () => {
+  const surface = card.dataset.surface;
+  if (!surface) return;
+  const reports = loadReports().filter((report) => report.surface !== surface);
+  reports.push({ surface, shown: card.dataset.pronunciation || null, date: today() });
+  writeStorage(FEEDBACK_KEY, JSON.stringify(reports.slice(-200)));
+  hideCard();
+  setStatus(`‘${surface}’ 힌트를 신고했어요. 이 기기에서는 다시 보이지 않아요.`);
+  activeAssist?.handleMessage({ type: "READSEED_UPDATE_SETTINGS", settings: assistSettings() }, () => ({ text: "" }));
+  rerender();
+});
+$("#clear-notebook").addEventListener("click", (event) => confirmTwice(event.currentTarget, "낱말 공책 지우기", () => {
+  writeStorage(NOTEBOOK_KEY, "[]");
+  updateNotebookTile();
+}));
+$("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentTarget, "모든 기록 지우기", () => {
+  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY]) {
+    try { localStorage.removeItem(key); } catch (_error) { /* nothing stored */ }
+  }
+  location.reload();
+}));
+$("#export-feedback").addEventListener("click", () => {
+  const sessions = loadSessions();
+  const days = new Set(sessions.map((session) => session.date)).size;
+  const payload = { exported: today(), note: "익명 기록 — 글 내용·이름 없음", daysUsed: days, sessions, reports: loadReports() };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `readseed-hint-reports-${today()}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+$("#consent").addEventListener("close", () => {
+  const choice = $("#consent").returnValue;
+  writeStorage(CONSENT_KEY, JSON.stringify({ date: today(), useAI: choice === "ai" }));
+  updateSetting("useAI", choice === "ai");
+  if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));
+});
+
+function confirmTwice(button, label, action) {
+  if (button.dataset.armed) {
+    action();
+    button.textContent = "지웠어요";
+    delete button.dataset.armed;
+    setTimeout(() => { button.textContent = label; }, 1500);
+    return;
+  }
+  button.dataset.armed = "1";
+  button.textContent = "한 번 더 누르면 지워요";
+  setTimeout(() => { delete button.dataset.armed; button.textContent = label; }, 3000);
+}
+
+function rerender() {
+  if (mode === "text") {
+    const results = [...textCache.values()].pop();
+    if (results) textAssist.renderAssistance(withState(results), assistSettings());
+  } else if (mode === "pdf" && pdf.current) {
+    const results = pdf.cache.get(pdf.current);
+    if (results) activeAssist?.renderAssistance(withState(results), assistSettings());
+  }
+}
 $("#pdf-view").addEventListener("click", () => toggleLargeText().catch(reportError));
 $("#zoom-in").addEventListener("click", () => changeZoom(1).catch(reportError));
 $("#zoom-out").addEventListener("click", () => changeZoom(-1).catch(reportError));
@@ -1195,8 +1539,34 @@ $("#guide-reading").addEventListener("click", () => {
   if (result?.ok) $("#guide-reading").textContent = "한 낱말씩 그만";
   else setStatus("한 낱말씩 읽을 글자를 찾지 못했어요");
 });
+function loadSessions() {
+  try {
+    const sessions = JSON.parse(readStorage(SESSIONS_KEY) || "[]");
+    return Array.isArray(sessions) ? sessions : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function logSession(extra = {}) {
+  // Kept without any text or names: when, how long, how many hints were opened.
+  const entries = [...taps.values()];
+  const sessions = loadSessions();
+  sessions.push({
+    date: today(),
+    minutes: Math.round((Date.now() - readingStarted) / 6000) / 10,
+    source: mode === "pdf" ? "pdf" : SAMPLES.some((sample) => sample.title === readingTitle) ? "sample" : "pasted",
+    hintsOpened: entries.length,
+    meaningsOpened: entries.filter((entry) => entry.meaning).length,
+    reports: loadReports().length,
+    ...extra,
+  });
+  writeStorage(SESSIONS_KEY, JSON.stringify(sessions.slice(-500)));
+}
+
 $("#finish-reading").addEventListener("click", () => {
   stopStudy();
+  if (readingStarted) logSession();
   renderReport();
   openDialog($("#report"));
 });
@@ -1246,4 +1616,6 @@ $("#notebook-open").addEventListener("click", () => {
 });
 applySettings();
 showServerStatus();
-if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));
+// First run: the guardian notice comes before anything is sent anywhere.
+if (!readStorage(CONSENT_KEY)) openDialog($("#consent"));
+else if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));

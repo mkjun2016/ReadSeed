@@ -466,3 +466,22 @@ body[data-view="home"] #home-button { display: none; }
 .notebook-word small { color: var(--sound); font-size: 17px; font-weight: 700; }
 .notebook-stars { color: oklch(0.72 0.15 75); font-size: 20px; letter-spacing: 2px; white-space: nowrap; }
 .chip.learned { background: var(--brand-tint); color: var(--brand-strong); }
+
+/* ---------- Basis, reporting, safety and consent ---------- */
+.hint-basis { margin-top: 8px !important; color: var(--ink-soft); font-size: 12.5px; line-height: 1.4; }
+.hint-report { margin-top: 8px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-soft); font-size: 13px; text-decoration: underline; }
+.safety-card { position: fixed; z-index: 1250; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 32px)); display: grid; gap: 12px; padding: 24px; border-radius: 20px; background: var(--surface); box-shadow: 0 20px 60px oklch(0 0 0 / 0.25); }
+.safety-card[hidden] { display: none; }
+.safety-card h2 { margin: 0; font-size: 21px; }
+.safety-card p { margin: 0; color: var(--ink-soft); line-height: 1.6; }
+.consent-list { display: grid; gap: 10px; margin: 0; padding-left: 1.1em; line-height: 1.55; }
+.consent-actions, .privacy-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.privacy-actions { justify-content: flex-start; }
+.privacy-note { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.text-button.danger { color: oklch(0.55 0.17 25); }
+.hint-links { display: flex; gap: 4px; justify-content: space-between; }
+.trace-sentence { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--fill); font-size: 16px; }
+.trace-steps { display: grid; gap: 8px; margin: 0; padding-left: 1.3em; font-size: 14px; line-height: 1.5; }
+.trace-steps li.focus { color: var(--brand-strong); font-weight: 700; }
+.trace-steps small { display: block; color: var(--ink-soft); font-weight: 400; }
+.chip.adapt { border-radius: 12px; background: var(--brand-tint); color: var(--brand-strong); font-weight: 600; }

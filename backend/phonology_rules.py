@@ -132,7 +132,124 @@ def _trace(word: str, g2p: G2p) -> tuple[str, list[str]]:
     return compose(inp), fired
 
 
-def classify(word: str, g2p: G2p) -> dict:
+_TENSE = {"ᄀ": "ᄁ", "ᄃ": "ᄄ", "ᄇ": "ᄈ", "ᄉ": "ᄊ", "ᄌ": "ᄍ"}
+
+
+def _diff_categories(spelled: str, pronounced: str) -> list[str]:
+    """사전 발음과 표기를 음절 단위로 비교해 바뀐 소리의 유형을 고른다."""
+    if len(spelled) != len(pronounced):
+        return []
+    found = set()
+    syllables = list(zip(spelled, pronounced))
+    for index, (s, p) in enumerate(syllables):
+        sj, pj = h2j(s), h2j(p)
+        if not sj or not pj:
+            continue
+        if _TENSE.get(sj[0]) == pj[0]:
+            found.add("경음화")
+        if sj[0] == "ᄋ" and pj[0] == "ᄂ" and index and h2j(spelled[index - 1])[-1:] not in ("ᆫ",):
+            found.add("ㄴ첨가")
+        if sj[0] == "ᄋ" and pj[0] == "ᄂ" and index and h2j(spelled[index - 1])[-1:] == "ᆫ" and h2j(pronounced[index - 1])[-1:] == "ᆫ":
+            found.add("ㄴ첨가")
+        if sj[0] == "ᄅ" and pj[0] == "ᄂ":
+            found.add("비음화")
+        if sj[0] == "ᄂ" and pj[0] == "ᄅ" or (len(sj) == 3 and sj[2] == "ᆫ" and len(pj) == 3 and pj[2] == "ᆯ"):
+            found.add("유음화")
+        if len(sj) == 3 and len(pj) == 3 and sj[2] != pj[2] and pj[2] in ("ᆼ", "ᆫ", "ᆷ") and sj[2] not in ("ᆼ", "ᆫ", "ᆷ"):
+            found.add("비음화")
+        if sj[0] in ("ᄀ", "ᄃ", "ᄇ", "ᄌ") and pj[0] in ("ᄏ", "ᄐ", "ᄑ", "ᄎ"):
+            found.add("격음화")
+        if len(sj) == 3 and len(pj) == 2 and index + 1 < len(syllables):
+            found.add("연음")
+    return sorted(found, key=_CATEGORY_PRIORITY.index)
+
+
+_kiwi = None
+_SPLIT_CODA = {  # 겹받침: (남는 받침, 넘어가는 받침)
+    "ᆪ": ("ᆨ", "ᄊ"), "ᆬ": ("ᆫ", "ᄌ"), "ᆭ": ("", "ᄂ"), "ᆰ": ("ᆯ", "ᄀ"), "ᆱ": ("ᆯ", "ᄆ"),
+    "ᆲ": ("ᆯ", "ᄇ"), "ᆳ": ("ᆯ", "ᄊ"), "ᆴ": ("ᆯ", "ᄐ"), "ᆵ": ("ᆯ", "ᄑ"), "ᆶ": ("", "ᄅ"), "ᆹ": ("ᆸ", "ᄊ"),
+}
+_CODA_TO_ONSET = {
+    "ᆨ": "ᄀ", "ᆩ": "ᄁ", "ᆫ": "ᄂ", "ᆮ": "ᄃ", "ᆯ": "ᄅ", "ᆷ": "ᄆ", "ᆸ": "ᄇ", "ᆺ": "ᄉ", "ᆻ": "ᄊ",
+    "ᆽ": "ᄌ", "ᆾ": "ᄎ", "ᆿ": "ᄏ", "ᇀ": "ᄐ", "ᇁ": "ᄑ", "ᇂ": "",
+}
+
+
+def _relink(word: str, pronounced: str) -> str | None:
+    """조사·어미가 붙는 자리의 연음을 표기에서 직접 계산해 g2pkk 결과를 바로잡는다.
+
+    g2pkk는 내장 형태소 분석이 조사를 실질 형태소로 잘못 보면 제15항(대표음 뒤 연음)을
+    적용해 무릎이→[무르비], 끝이→[끄시], 뜯어→[뜨서]처럼 틀린다. 표준발음법 제13·14항
+    (홑·겹받침은 조사·어미의 모음 앞에서 그대로 넘어감)과 제17항(ㄷ·ㅌ+이 → ㅈ·ㅊ)으로
+    경계 한 곳만 다시 계산한다. 경계는 Kiwi 형태소 분석으로 찾는다.
+    """
+    global _kiwi
+    if len(word) != len(pronounced) or len(word) < 2:
+        return None
+    if _kiwi is None:
+        from kiwipiepy import Kiwi
+
+        _kiwi = Kiwi()
+    tokens = _kiwi.tokenize(word)
+    for prev, token in zip(tokens, tokens[1:]):
+        if not (token.tag.startswith(("J", "E")) or token.tag == "VCP"):
+            continue
+        b = token.start
+        if not 0 < b < len(word) or prev.start + prev.len != b:
+            continue
+        before, after = h2j(word[b - 1]), h2j(word[b])
+        if len(before) < 3 or after[0] != "ᄋ":
+            continue
+        coda = before[2]
+        if coda == "ᆼ":
+            continue
+        keep, moved = _SPLIT_CODA.get(coda, ("", _CODA_TO_ONSET.get(coda)))
+        if moved is None:
+            continue
+        if moved in ("ᄃ", "ᄐ") and after[1] == "ᅵ":
+            moved = "ᄌ" if moved == "ᄃ" else "ᄎ"  # 제17항 구개음화
+        said_before, said_after = h2j(pronounced[b - 1]), h2j(pronounced[b])
+        new_before = compose(said_before[:2] + keep)
+        new_after = compose((moved or "ᄋ") + said_after[1:])
+        fixed = pronounced[: b - 1] + new_before + new_after + pronounced[b + 1:]
+        return fixed if fixed != pronounced else None
+    return None
+
+
+def _from_lexicon(word: str, g2p: G2p) -> dict | None:
+    """규칙으로 계산할 수 없는 낱말(사잇소리·한자어 된소리·ㄴ 첨가)은 사전 발음을 쓴다."""
+    import pronunciation_lexicon
+
+    hit = pronunciation_lexicon.lookup(word)
+    if not hit:
+        return None
+    head, item, tail = hit
+    if tail:
+        # 사전 발음은 낱말만 따로 읽은 소리라 끝 받침이 대표음으로 바뀌어 있다(빛→[삗]).
+        # 조사가 붙으면 원래 받침이 넘어가므로(빛이→[비치]) 끝 받침은 표기대로 되돌리고 잇는다.
+        spelled_last, said_last = h2j(head[-1]), h2j(item["발음"][-1])
+        last = compose(said_last[:2] + spelled_last[2:])
+        # 규칙은 낱말 끝 음절과 꼬리가 만나는 자리에만 적용한다. 앞부분까지 다시 돌리면
+        # 사전이 정한 소리(거덜나[거덜나])를 규칙이 되돌려 버린다(거덜라).
+        pronunciation = item["발음"][:-1] + g2p(last + tail)
+    else:
+        pronunciation = item["발음"]
+    lexical = _diff_categories(head, item["발음"])
+    rule_part = classify(word, g2p, use_lexicon=False)["유형전체"]
+    categories = sorted(set(lexical) | set(rule_part), key=_CATEGORY_PRIORITY.index)
+    return {
+        "표기": word,
+        "발음": pronunciation,
+        "다름": word != pronunciation,
+        "유형": categories[0] if categories else "어휘적예외",
+        "유형전체": categories or ["어휘적예외"],
+        "조항": ["사전"],
+        "신뢰": True,
+        "근거": {"출처": "국립국어원 한국어기초사전", "표제어": head, "entry_id": item["entry_id"]},
+    }
+
+
+def classify(word: str, g2p: G2p, use_lexicon: bool = True) -> dict:
     """표제어(어절)를 형태소 경계 기준으로 분석해 발음과 음운변동 유형을 반환.
 
     반환값의 "신뢰"가 False이면 추적 파이프라인이 g2pkk 최종 출력과 어긋난
@@ -165,9 +282,29 @@ def classify(word: str, g2p: G2p) -> dict:
             "신뢰": True,
         }
 
+    if use_lexicon:
+        lexical = _from_lexicon(word, g2p)
+        if lexical:
+            return lexical
+
     real_pron = g2p(word)
     traced_pron, fired = _trace(word, g2p)
     reliable = traced_pron == real_pron
+
+    relinked = _relink(word, real_pron)
+    if relinked:
+        palatal = any(a != b and h2j(b)[0] in ("ᄌ", "ᄎ") for a, b in zip(real_pron, relinked))
+        kept = [c for c in sorted({RULE_TO_CATEGORY[r] for r in fired if r in RULE_TO_CATEGORY}) if c not in ("받침대표음화", "모음변화", "연음", "구개음화")]
+        categories = sorted(set(kept) | {"구개음화" if palatal else "연음"}, key=_CATEGORY_PRIORITY.index)
+        return {
+            "표기": word,
+            "발음": relinked,
+            "다름": word != relinked,
+            "유형": categories[0],
+            "유형전체": categories,
+            "조항": ["17"] if palatal else ["13", "14"],
+            "신뢰": True,
+        }
 
     categories = sorted(
         {RULE_TO_CATEGORY[r] for r in fired if r in RULE_TO_CATEGORY},

@@ -66,6 +66,22 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 500)
         self.assertEqual(raised.exception.detail, "annotation failed")
 
+    def test_annotate_rejects_overlong_sentence_with_413(self):
+        with self.assertRaises(HTTPException) as raised:
+            api.annotate(api.AnnotateRequest(sentence="가" * (api.MAX_SENTENCE_CHARS + 1)))
+        self.assertEqual(raised.exception.status_code, 413)
+
+    def test_annotate_can_run_without_llm(self):
+        received = []
+
+        def annotate_sentence(sentence, use_llm=True):
+            received.append(use_llm)
+            return []
+
+        with self.fake_pipeline(annotate_sentence):
+            api.annotate(api.AnnotateRequest(sentence="같이", use_llm=False))
+        self.assertEqual(received, [False])
+
     def test_key_info_returns_sentence_indices(self):
         module = types.ModuleType("key_info_selector")
         module.select = lambda sentences: [1] if len(sentences) == 2 else []

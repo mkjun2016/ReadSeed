@@ -36,11 +36,23 @@ class GlossSelectorTest(unittest.TestCase):
         result = gloss_selector.select_rule_only("해지", "NNG", [entry("계약 관계를 끝냄")])
         self.assertEqual(result.candidate["뜻풀이"], "계약 관계를 끝냄")
 
-    def test_actual_overlay_selector_hides_when_llm_is_not_configured(self):
+    def test_without_llm_only_a_single_advanced_sense_is_shown(self):
+        # AI가 없거나 보호자가 껐을 때도 뜻이 하나뿐인 고급어는 규칙만으로 확실하다.
         with patch.dict(os.environ, {}, clear=True):
-            result = gloss_selector.select("계약을 해지했다.", "해지", "NNG", [entry("계약 관계를 끝냄")])
-        self.assertIsNone(result.candidate)
-        self.assertEqual(result.reason, "llm_not_configured")
+            single = gloss_selector.select("계약을 해지했다.", "해지", "NNG", [entry("계약 관계를 끝냄")])
+            several = gloss_selector.select("조사를 했다.", "조사", "NNG", [entry("조문", local_id="1:1"), entry("살펴봄", local_id="2:1")])
+        self.assertEqual(single.reason, "single_sense")
+        self.assertIsNone(several.candidate)
+        self.assertEqual(several.reason, "llm_not_configured")
+
+    def test_llm_switch_off_never_calls_the_api(self):
+        config = {"GLOSS_LLM_API_URL": "https://example.test/v1/chat/completions", "GLOSS_LLM_API_KEY": "key", "GLOSS_LLM_MODEL": "test"}
+        choices = [entry("조문", local_id="1:1"), entry("살펴봄", local_id="2:1")]
+        gloss_selector.clear_cache()
+        with patch.dict(os.environ, config, clear=True), patch.object(gloss_selector, "_request_llm_batch") as request:
+            result = gloss_selector.select("조사를 했다.", "조사", "NNG", choices, use_llm=False)
+        request.assert_not_called()
+        self.assertEqual(result.reason, "llm_off")
 
     def test_llm_can_only_select_an_existing_high_confidence_candidate_and_is_cached(self):
         candidates = [entry("조문하는 글", local_id="1:1"), entry("내용을 자세히 살펴봄", local_id="2:1")]

@@ -107,7 +107,46 @@
       <p class="hint-sound" id="hint-sound" hidden></p>
       <p class="hint-meaning" id="hint-meaning" hidden></p>
       <button id="hint-more" class="hint-more" type="button" hidden>뜻도 볼래요</button>
+      <p class="hint-basis" id="hint-basis" hidden></p>
+      <div class="hint-links">
+        <button id="hint-why" class="hint-report" type="button">어떻게 정했어요?</button>
+        <button id="hint-report" class="hint-report" type="button">힌트가 이상해요</button>
+      </div>
     </div>
+
+    <div id="safety-card" class="safety-card" role="alert" hidden>
+      <h2>ReadSeed는 진단하지 않아요</h2>
+      <p>읽기 어려움이 걱정된다면 담임 선생님, 지역 교육청의 난독·학습 지원(학습종합클리닉센터), 소아청소년 전문의와 상담해 주세요. ReadSeed는 읽는 순간을 돕는 도구예요.</p>
+      <button id="safety-close" class="primary-button" type="button">알겠어요, 글 읽기</button>
+    </div>
+
+    <dialog id="trace" class="sheet" aria-labelledby="trace-title">
+      <form method="dialog">
+        <header class="sheet-head">
+          <h2 id="trace-title">이 문장을 이렇게 처리했어요</h2>
+          <button class="text-button" value="close">닫기</button>
+        </header>
+        <p id="trace-sentence" class="trace-sentence"></p>
+        <ol id="trace-steps" class="trace-steps"></ol>
+      </form>
+    </dialog>
+
+    <dialog id="consent" class="sheet" aria-labelledby="consent-title">
+      <form method="dialog">
+        <h2 id="consent-title">보호자께 먼저 알려 드려요</h2>
+        <ul class="consent-list">
+          <li><b>읽는 글</b> — 힌트를 만들려고 서버로 보내요. 서버는 글과 PDF·사진을 저장하지 않아요.</li>
+          <li><b>AI 뜻 고르기</b> — 켜면 뜻이 여러 개인 낱말이 있는 문장만 Anthropic Claude로 보내 알맞은 뜻 하나를 고르게 해요. 끄면 밖으로 보내지 않아요.</li>
+          <li><b>개인정보 가리기</b> — 전화번호·이메일·주민등록번호·카드번호처럼 보이는 숫자는 보내기 전에 가려요.</li>
+          <li><b>낱말 공책</b> — 이 기기에만 저장되고, 90일 동안 다시 보지 않은 낱말은 저절로 지워져요. 설정에서 언제든 모두 지울 수 있어요.</li>
+          <li><b>진단 아님</b> — 읽기 기록은 참고용이에요. 난독증 여부를 판단하지 않아요.</li>
+        </ul>
+        <div class="consent-actions">
+          <button class="text-button" value="rules" type="submit">AI 없이 쓸게요</button>
+          <button class="primary-button" value="ai" type="submit">동의하고 시작</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="settings" class="sheet" aria-labelledby="settings-title">
       <form method="dialog">
@@ -155,9 +194,28 @@
           </div>
         </fieldset>
         <fieldset>
+          <legend>힌트 양</legend>
+          <div class="segmented" data-setting="hintAmount">
+            <button type="button" value="few">적게</button>
+            <button type="button" value="some">알맞게</button>
+            <button type="button" value="many">많이</button>
+          </div>
+        </fieldset>
+        <fieldset>
           <legend>힌트 종류</legend>
+          <label class="switch"><input type="checkbox" data-setting="adapt" />아이에게 맞춰 조절 (자주 막힌 소리는 더, 익힌 소리는 덜)</label>
           <label class="switch"><input type="checkbox" data-setting="pronunciation" />읽는 법</label>
           <label class="switch"><input type="checkbox" data-setting="gloss" />쉬운 뜻</label>
+        </fieldset>
+        <fieldset>
+          <legend>내 기록과 개인정보</legend>
+          <label class="switch"><input type="checkbox" data-setting="useAI" />AI로 뜻 고르기 (문장 일부를 Claude로 보내요)</label>
+          <p class="privacy-note">낱말 공책은 이 기기에만 있어요. 90일 동안 보지 않은 낱말은 저절로 지워져요.</p>
+          <div class="privacy-actions">
+            <button id="clear-notebook" class="text-button" type="button">낱말 공책 지우기</button>
+            <button id="clear-all" class="text-button danger" type="button">모든 기록 지우기</button>
+            <button id="export-feedback" class="text-button" type="button">사용 기록·신고 내보내기(익명)</button>
+          </div>
         </fieldset>
         <fieldset>
           <legend>한 낱말씩 읽기 속도</legend>

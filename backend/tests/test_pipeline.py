@@ -29,7 +29,10 @@ class PipelineTest(unittest.TestCase):
         with (patch.object(pipeline.dict_lookup, "lookup", return_value=[entry("어려운 뜻")]) as primary, patch.object(pipeline.gloss_selector, "select", return_value=selected)):
             first = pipeline._lookup_gloss("이 문장의 단어", "단어", "NNG")
             second = pipeline._lookup_gloss("이 문장의 단어", "단어", "NNG")
-        self.assertEqual(first, [{"출처": "한국어기초사전", "표제어": "단어", "품사": "명사", "뜻풀이": "어려운 뜻"}])
+        self.assertEqual(first, [{
+            "출처": "한국어기초사전", "표제어": "단어", "품사": "명사", "뜻풀이": "어려운 뜻",
+            "근거": {"사전ID": entry("어려운 뜻").get("_local_id"), "선택": "llm_selected", "확신도": 0.95},
+        }])
         self.assertIs(first, second)
         primary.assert_called_once_with("단어")
 

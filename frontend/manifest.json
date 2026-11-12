@@ -25,14 +25,6 @@
   ],
   "optional_host_permissions": ["http://*/*", "https://*/*", "file:///*"],
   "permissions": ["storage", "activeTab", "scripting"],
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["assist.js", "content.js"],
-      "css": ["overlay.css"],
-      "run_at": "document_idle"
-    }
-  ],
   "web_accessible_resources": [
     {
       "resources": ["toolbar/toolbar.html", "toolbar/toolbar.css", "toolbar/toolbar.js"],
