@@ -8,6 +8,8 @@ const { create, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
 
 const SETTINGS_KEY = "readseedWebSettings";
 const GUIDE_KEY = "readseedWebGuideSeen";
+const TIP_KEY = "readseedWebReaderTipDone";
+const TIP_AFTER_TAPS = 3; // the reading tip stays until the child has opened this many hints
 const NOTEBOOK_KEY = "readseedWebNotebook";
 const CONSENT_KEY = "readseedWebConsent";
 const FEEDBACK_KEY = "readseedWebHintReports";
@@ -28,7 +30,7 @@ const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const LEARNED_STREAK = 3;
 const NOTEBOOK_LIMIT = 300;
 const DEFAULT_SETTINGS = {
-  fontSize: "1",
+  fontSize: "2", // 20px: 3rd–4th graders read more comfortably above body-text size
   lineGap: "wide",
   letterSpacing: "normal",
   paper: "cream",
@@ -300,7 +302,15 @@ function queueReviews(results) {
 function updateReviewButton() {
   const count = loadJSON(REVIEW_KEY, []).length + loadReports().length;
   const button = document.querySelector("#open-review");
-  if (button) button.textContent = `선생님 검토${count ? ` (${count})` : ""}`;
+  if (button) button.firstChild.textContent = `선생님 검토${count ? ` (${count})` : ""}`;
+  const badge = $("#home-review-count");
+  badge.textContent = String(count);
+  badge.hidden = !count;
+}
+
+// Dock buttons carry an icon, so only their label text changes.
+function setLabel(selector, text) {
+  $(selector).querySelector(".label").textContent = text;
 }
 
 function withState(results) {
@@ -380,6 +390,7 @@ async function analyze(assist, sentences, cacheKey, cache, isCurrent, unsure = [
 
 function showView(view) {
   document.body.dataset.view = view;
+  if (view !== "reader") delete document.body.dataset.mode;
   $("#home").hidden = view !== "home";
   $("#reader").hidden = view !== "reader";
   $("#reader-dock").hidden = view !== "reader";
@@ -410,8 +421,10 @@ function startReading(title) {
   pdfAssist.clearOverlay();
   patchAssist.clearOverlay();
   $("#appbar-title").textContent = title;
-  $("#guide-reading").textContent = "한 낱말씩 읽기";
+  setLabel("#guide-reading", "한 낱말씩 읽기");
+  $("#guide-reading").setAttribute("aria-pressed", "false");
   showView("reader");
+  $("#reader-tip").hidden = Boolean(readStorage(TIP_KEY));
   window.scrollTo(0, 0);
   return run;
 }
@@ -432,6 +445,7 @@ function openText({ title, kind = "", text }) {
   const thisRun = startReading(title);
   closePdf();
   mode = "text";
+  document.body.dataset.mode = mode;
   activeAssist = textAssist;
   $("#story").hidden = false;
   pdfSection.hidden = true;
@@ -520,6 +534,7 @@ async function openPdf(file) {
   const thisRun = startReading(file.name.replace(/\.pdf$/i, ""));
   closePdf();
   mode = "pdf";
+  document.body.dataset.mode = mode;
   $("#story").hidden = true;
   pdfSection.hidden = false;
   $("#pdf-zoom").hidden = false;
@@ -866,7 +881,7 @@ async function analyzePdfPage(entry) {
 }
 
 function updateViewLabel() {
-  $("#pdf-view").textContent = pdf.large ? "원래 쪽 보기" : "큰 글씨로 보기";
+  setLabel("#pdf-view", pdf.large ? "원래 쪽 보기" : "큰 글씨로 보기");
   $("#pdf-view").setAttribute("aria-pressed", String(pdf.large));
 }
 
@@ -934,7 +949,9 @@ function showCard(info) {
   }
   // Pronunciation comes first; the meaning is one more tap away so the card stays small.
   const meaningElement = $("#hint-meaning");
-  meaningElement.textContent = meaning || "";
+  const meaningCaption = document.createElement("small");
+  meaningCaption.textContent = "쉬운 뜻";
+  meaningElement.replaceChildren(...(meaning ? [meaningCaption, meaning] : []));
   meaningElement.hidden = !meaning || Boolean(info.pronunciation);
   $("#hint-more").hidden = !meaning || !info.pronunciation;
 
@@ -948,6 +965,15 @@ function showCard(info) {
   card.hidden = false;
   placeCard(info.rect);
   logTap(info, meaning, meaning && !info.pronunciation);
+  countTipTap();
+}
+
+let tipTaps = 0;
+function countTipTap() {
+  tipTaps += 1;
+  if (tipTaps < TIP_AFTER_TAPS || readStorage(TIP_KEY)) return;
+  writeStorage(TIP_KEY, "1");
+  $("#reader-tip").hidden = true;
 }
 
 // Where the hint comes from, in plain words for a teacher or parent reading along.
@@ -1301,8 +1327,10 @@ function dueWords() {
 function updateNotebookTile() {
   const words = loadNotebook();
   const due = words.filter((word) => !word.learned).length;
-  $("#notebook-tile").hidden = !words.length;
-  $("#notebook-count").textContent = due ? `복습할 낱말 ${due}개` : "모두 익혔어요!";
+  $("#notebook-tile").classList.toggle("empty", !words.length);
+  $("#notebook-count").textContent = !words.length
+    ? "힌트를 본 낱말이 여기에 모여요. 다른 날 혼자 맞게 읽으면 별을 받아요."
+    : due ? `복습할 낱말 ${due}개 · 익힌 낱말 ${words.length - due}개` : "모두 익혔어요!";
 }
 
 function renderNotebook() {
@@ -1380,12 +1408,27 @@ function applySettings() {
   root.setProperty("--story-line", String(LINE_GAPS[settings.lineGap] || 2.3));
   root.setProperty("--story-tracking", TRACKING[settings.letterSpacing] || TRACKING.normal);
   document.body.dataset.paper = settings.paper;
+  document.body.dataset.reveal = settings.reveal;
   document.querySelectorAll(".segmented").forEach((group) => {
     group.querySelectorAll("button").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.value === String(settings[group.dataset.setting])));
     });
   });
   document.querySelectorAll("input[data-setting]").forEach((input) => { input.checked = Boolean(settings[input.dataset.setting]); });
+  updateHomeState();
+}
+
+// The grown-up card on the home screen shows how hints are set right now.
+function updateHomeState() {
+  const amount = { few: "적게", some: "알맞게", many: "많이" }[settings.hintAmount] || "알맞게";
+  const chips = [
+    [`힌트 ${amount}`, true],
+    [settings.adapt ? "아이 맞춤 켬" : "아이 맞춤 끔", settings.adapt],
+    [settings.useAI ? "AI 뜻 고르기 켬" : "AI 끔 · 사전만", settings.useAI],
+  ];
+  const box = element("span", "state-chips");
+  box.append(...chips.map(([label, on]) => element("span", `state-chip${on ? " on" : ""}`, label)));
+  $("#home-hint-state").replaceChildren(box);
 }
 
 function updateSetting(key, value) {
@@ -1420,7 +1463,10 @@ function renderSamples() {
     const preview = document.createElement("span");
     preview.className = "preview";
     preview.textContent = sample.text;
-    button.append(kind, title, preview);
+    const go = document.createElement("span");
+    go.className = "go";
+    go.textContent = "읽기 →";
+    button.append(kind, title, preview, go);
     button.addEventListener("click", () => openText(sample));
     return button;
   }));
@@ -1590,7 +1636,7 @@ $("#clear-notebook").addEventListener("click", (event) => confirmTwice(event.cur
   updateNotebookTile();
 }));
 $("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentTarget, "모든 기록 지우기", () => {
-  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY]) {
+  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY, TIP_KEY]) {
     try { localStorage.removeItem(key); } catch (_error) { /* nothing stored */ }
   }
   location.reload();
@@ -1649,11 +1695,15 @@ $("#guide-reading").addEventListener("click", () => {
   hideCard();
   if (document.querySelector("#readseed-reading-controls")) {
     activeAssist.handleMessage({ type: "READSEED_STOP_READING" });
-    $("#guide-reading").textContent = "한 낱말씩 읽기";
+    setLabel("#guide-reading", "한 낱말씩 읽기");
+    $("#guide-reading").setAttribute("aria-pressed", "false");
     return;
   }
   const result = activeAssist.handleMessage({ type: "READSEED_START_READING" });
-  if (result?.ok) $("#guide-reading").textContent = "한 낱말씩 그만";
+  if (result?.ok) {
+    setLabel("#guide-reading", "한 낱말씩 그만");
+    $("#guide-reading").setAttribute("aria-pressed", "true");
+  }
   else setStatus("한 낱말씩 읽을 글자를 찾지 못했어요");
 });
 function loadSessions() {
@@ -1698,7 +1748,9 @@ document.querySelectorAll("input[data-setting]").forEach((input) => {
 });
 document.querySelectorAll("dialog").forEach((dialog) => {
   // Tapping the dimmed backdrop closes a sheet, as on iPadOS.
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  // The guardian notice needs an explicit choice, so it does not close from the backdrop.
+  dialog.addEventListener("click", (event) => { if (event.target === dialog && dialog.id !== "consent") dialog.close(); });
+  if (dialog.id === "consent") dialog.addEventListener("cancel", (event) => event.preventDefault());
 });
 storyBody.addEventListener("click", onTextTap);
 pdfPages.addEventListener("click", onTextTap);
@@ -1727,6 +1779,31 @@ window.addEventListener("resize", () => {
 
 renderSamples();
 updateNotebookTile();
+// Home demo: the same two taps as in a real text (sound, then meaning), all local.
+$("#try-word").addEventListener("click", () => {
+  const hint = $("#try-hint");
+  const step = (Number(hint.dataset.step) + 1) % 3;
+  hint.dataset.step = String(step);
+  $("#try-word").setAttribute("aria-expanded", String(step > 0));
+});
+$("#tip-close").addEventListener("click", () => {
+  writeStorage(TIP_KEY, "1");
+  $("#reader-tip").hidden = true;
+});
+function openSettingsAt(id) {
+  openDialog($("#settings"));
+  $(`#${id}`).scrollIntoView({ block: "start" });
+}
+document.querySelectorAll(".sheet-tabs a").forEach((link) => link.addEventListener("click", (event) => {
+  event.preventDefault();
+  $(link.getAttribute("href")).scrollIntoView({ block: "start", behavior: "smooth" });
+}));
+$("#home-hints").addEventListener("click", () => openSettingsAt("set-hints"));
+$("#home-privacy").addEventListener("click", () => openSettingsAt("set-grown"));
+$("#home-review").addEventListener("click", () => {
+  renderReview();
+  openDialog($("#review"));
+});
 $("#notebook-open").addEventListener("click", () => {
   renderNotebook();
   openDialog($("#report"));
