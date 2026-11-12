@@ -485,3 +485,12 @@ body[data-view="home"] #home-button { display: none; }
 .trace-steps li.focus { color: var(--brand-strong); font-weight: 700; }
 .trace-steps small { display: block; color: var(--ink-soft); font-weight: 400; }
 .chip.adapt { border-radius: 12px; background: var(--brand-tint); color: var(--brand-strong); font-weight: 600; }
+.review-body { display: grid; gap: 14px; }
+.review-item { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--fill); }
+.review-item h3 { margin: 0; font-size: 16px; }
+.review-context { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.review-choices { display: grid; gap: 6px; }
+.review-choice { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); text-align: left; font-size: 14.5px; }
+.review-choice.suggested { border-color: var(--brand); }
+.review-choice.none { color: var(--ink-soft); }
+.review-report { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14.5px; }

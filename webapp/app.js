@@ -13,6 +13,10 @@ const CONSENT_KEY = "readseedWebConsent";
 const FEEDBACK_KEY = "readseedWebHintReports";
 // Anonymous reading sessions on this device (no text, no names) for usability tests.
 const SESSIONS_KEY = "readseedWebSessions";
+// Human-in-the-loop: senses the AI was unsure about wait here for a teacher, and the
+// teacher's choices are applied to later readings on this device.
+const REVIEW_KEY = "readseedWebReviewQueue";
+const OVERRIDES_KEY = "readseedWebGlossOverrides";
 let readingStarted = 0;
 let readingTitle = "";
 // Words the child has not seen for this long are removed from the device.
@@ -228,7 +232,9 @@ function reportResult(summary, failed, results = []) {
   const how = settings.reveal === "tap" ? "밑줄 친 낱말을 눌러 보세요" : "낱말을 누르면 크게 볼 수 있어요";
   const privacy = maskedCount ? ` · 개인정보로 보이는 ${maskedCount}곳은 가리고 보냈어요` : "";
   const partial = failed ? ` · ${failed}문장은 힌트를 못 만들었어요` : "";
-  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial + adaptationNote() + difficultyNote(results) + privacy);
+  const unsure = results.filter((result) => result?.uncertain).length;
+  const ocrNote = unsure ? ` · 글자 인식이 불확실한 ${unsure}문장은 힌트를 쉬었어요(‘원래 쪽 보기’로 비교)` : "";
+  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial + ocrNote + adaptationNote() + difficultyNote(results) + privacy);
 }
 
 // State changes what the child sees: a word read right on three days needs no hint,
@@ -266,13 +272,55 @@ function learnerProfile() {
 // amount; with "아이에게 맞춰" on, sound changes this child keeps missing are always
 // shown and ones the child has learned are dropped. Each decision is kept on the word
 // (맞춤) so the hint card can say why.
+function loadJSON(key, fallback) {
+  try {
+    const value = JSON.parse(readStorage(key) || "null");
+    return value ?? fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function queueReviews(results) {
+  const queue = loadJSON(REVIEW_KEY, []);
+  const overrides = loadJSON(OVERRIDES_KEY, {});
+  let added = 0;
+  for (const result of results) {
+    for (const word of result?.ok ? result.annotations : []) {
+      const review = word.뜻검토;
+      if (!review || review.표제어 in overrides || queue.some((item) => item.표제어 === review.표제어)) continue;
+      queue.push({ ...review, 문장: result.sentence, 날짜: today() });
+      added += 1;
+    }
+  }
+  if (added) writeStorage(REVIEW_KEY, JSON.stringify(queue.slice(-100)));
+  updateReviewButton();
+}
+
+function updateReviewButton() {
+  const count = loadJSON(REVIEW_KEY, []).length + loadReports().length;
+  const button = document.querySelector("#open-review");
+  if (button) button.textContent = `선생님 검토${count ? ` (${count})` : ""}`;
+}
+
 function withState(results) {
   const hidden = hiddenWords();
+  const overrides = loadJSON(OVERRIDES_KEY, {});
   const allowed = HINT_TYPES[settings.hintAmount] || null;
   const profile = settings.adapt ? learnerProfile() : { struggling: new Set(), mastered: new Set() };
   return results.map((result) => (!result?.ok ? result : {
     ...result,
-    annotations: result.annotations.map((word) => {
+    annotations: result.annotations.map((original) => {
+      let word = original;
+      // Uncertain OCR paragraph: the letters may be misread, so no hints there.
+      if (result.uncertain) return { ...word, 다름: false, 뜻풀이후보: [] };
+      // Teacher decisions apply wherever the same headword appears later.
+      const lemmas = [word.뜻검토?.표제어, ...(word.형태소 || []).map(([form, tag]) => (tag === "VV" || tag === "VA" ? `${form}다` : form))].filter(Boolean);
+      const key = lemmas.find((lemma) => lemma in overrides);
+      if (key) {
+        const chosen = overrides[key];
+        word = { ...word, 뜻풀이후보: chosen ? [{ 출처: "한국어기초사전", 표제어: key, 뜻풀이: chosen.뜻풀이, 근거: { 사전ID: chosen.local_id, 선택: "teacher" } }] : [] };
+      }
       if (hidden.has(word.표기)) return { ...word, 다름: false, 뜻풀이후보: [] };
       if (!word.다름) return word;
       if (profile.struggling.has(word.유형)) return { ...word, 맞춤: "struggle" };
@@ -306,19 +354,25 @@ function difficultyNote(results) {
   return hard >= 0.12 ? " · 참고: 3~4학년 글보다 어려운 낱말이 많아요" : "";
 }
 
-async function analyze(assist, sentences, cacheKey, cache, isCurrent) {
+async function analyze(assist, sentences, cacheKey, cache, isCurrent, unsure = []) {
+  const mark = (list) => {
+    // OCR paragraphs with low-confidence lines: keep the sentence, skip its hints.
+    if (unsure.length) for (const result of list) if (result) result.uncertain = unsure.some((para) => para.includes(result.sentence.trim().slice(0, 12)));
+    return list;
+  };
   let results = cache.get(cacheKey);
   if (!results) {
     setStatus("힌트를 준비하고 있어요…");
     results = await annotateAll(sentences, (partial) => {
       if (!isCurrent()) return;
       setStatus(`힌트를 준비하고 있어요… ${partial.length}/${sentences.length}`);
-      assist.renderAssistance(withState(partial), assistSettings());
+      assist.renderAssistance(withState(mark(partial)), assistSettings());
     });
     if (results.some((result) => result.ok)) cache.set(cacheKey, results);
+    queueReviews(results);
   }
   if (!isCurrent()) return;
-  const summary = assist.renderAssistance(withState(results), assistSettings());
+  const summary = assist.renderAssistance(withState(mark(results)), assistSettings());
   reportResult(summary, results.filter((result) => !result.ok).length, results);
 }
 
@@ -787,6 +841,7 @@ async function analyzePdfPage(entry) {
   if (pdf.large && layout.blocks.length) renderPatches(entry, layout);
   else removePatches(entry);
   const sentences = splitSentences(layout.text).slice(0, MAX_SENTENCES);
+  const unsurePara = (layout.blocks || []).flatMap((block) => block.paragraphs.filter((_, i) => block.uncertain?.[i]));
   if (!sentences.length) {
     setStatus(`${entry.number}쪽에는 읽을 글자가 없어요.`);
     return;
@@ -799,7 +854,7 @@ async function analyzePdfPage(entry) {
   const assist = pdf.large ? patchAssist : pdfAssist;
   assist.setTarget(entry.element, null);
   activeAssist = assist;
-  await analyze(assist, sentences, entry.number, pdf.cache, isCurrent);
+  await analyze(assist, sentences, entry.number, pdf.cache, isCurrent, unsurePara);
   if (pdf.large && isCurrent()) fitPage(entry);
   // Read the next page ahead so turning to it is instant.
   const next = pdf.pages[entry.number];
@@ -901,7 +956,7 @@ function basisText(info, candidate) {
   const sound = info.word?.근거?.발음;
   if (info.pronunciation && sound?.출처) parts.push(`읽는 법: ${sound.출처} ‘${sound.표제어}’`);
   else if (info.pronunciation && sound?.표준발음법?.length) parts.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : "뜻: 한국어기초사전");
+  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : candidate.근거?.선택 === "teacher" ? "뜻: 한국어기초사전 · 선생님이 확인" : "뜻: 한국어기초사전");
   const why = info.word?.맞춤 === "struggle" ? ` · 자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
   return parts.length ? `근거 — ${parts.join(" / ")}${why}` : "";
 }
@@ -1438,14 +1493,23 @@ $("#hint-why").addEventListener("click", async () => {
   $("#trace-steps").replaceChildren(element("li", "", "작동 기록을 불러오는 중이에요…"));
   openDialog($("#trace"));
   try {
+    const learner = settings.adapt ? learnerProfile() : { struggling: new Set(), mastered: new Set() };
+    const profile = Object.fromEntries([...[...learner.struggling].map((type) => [type, "struggle"]), ...[...learner.mastered].map((type) => [type, "mastered"])]);
     const response = await fetch("/explain", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentence: maskPersonalInfo(sentence), use_llm: Boolean(settings.useAI) }),
+      // Only sound-change types and their status leave the device, never the child's words.
+      body: JSON.stringify({ sentence: maskPersonalInfo(sentence), use_llm: Boolean(settings.useAI), profile }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload?.detail || response.status);
     const surface = lastCardWord?.표기;
+    // Decisions made on this device after the server answered (state and teacher input).
+    const local = [];
+    if (lastCardWord?.뜻풀이후보?.[0]?.근거?.선택 === "teacher") local.push({ 단계: "사람 확인", 어절: surface, 도구: "선생님 검토", 판단: "선생님이 고른 뜻을 이 기기에서 적용" });
+    if (lastCardWord?.맞춤 === "struggle") local.push({ 단계: "학습 상태", 어절: surface, 도구: "낱말 공책", 판단: `자주 막힌 ${lastCardWord.유형} → 힌트 꼭 표시` });
+    const done = payload.trace.pop();
+    payload.trace.push(...local, done);
     $("#trace-steps").replaceChildren(...payload.trace.map((step) => {
       const { head, detail } = describeStep(step);
       const item = element("li", step.어절 === surface || (surface && step.표제어 && surface.startsWith(step.표제어.replace(/다$/, ""))) ? "focus" : "", head);
@@ -1457,12 +1521,65 @@ $("#hint-why").addEventListener("click", async () => {
   }
 });
 
+function renderReview() {
+  const queue = loadJSON(REVIEW_KEY, []);
+  const reports = loadReports();
+  const body = $("#review-body");
+  const parts = [];
+  if (!queue.length && !reports.length) parts.push(element("p", "report-note", "검토할 것이 없어요."));
+  for (const item of queue) {
+    const box = element("section", "review-item");
+    box.append(element("h3", "", `‘${item.표제어}’의 뜻 — AI 확신 ${item.확신도}`));
+    box.append(element("p", "review-context", item.문장 || ""));
+    const choices = element("div", "review-choices");
+    for (const candidate of item.후보) {
+      const label = candidate.local_id === item.제안 ? `${candidate.뜻풀이}  (AI 제안)` : candidate.뜻풀이;
+      choices.append(button(label, `review-choice${candidate.local_id === item.제안 ? " suggested" : ""}`, () => decide(item.표제어, candidate)));
+    }
+    choices.append(button("보여 주지 않기", "review-choice none", () => decide(item.표제어, null)));
+    box.append(choices);
+    parts.push(box);
+  }
+  if (reports.length) {
+    const box = element("section", "review-item");
+    box.append(element("h3", "", "아이가 ‘이상해요’라고 신고한 힌트"));
+    for (const report of reports) {
+      const row = element("div", "review-report", `${report.surface}${report.shown ? ` [${report.shown}]` : ""} · ${report.date}`);
+      row.append(button("다시 보이기", "text-button", () => {
+        writeStorage(FEEDBACK_KEY, JSON.stringify(loadReports().filter((r) => r.surface !== report.surface)));
+        renderReview();
+        rerender();
+      }));
+      box.append(row);
+    }
+    parts.push(box);
+  }
+  body.replaceChildren(...parts);
+  updateReviewButton();
+
+  function decide(word, candidate) {
+    const overrides = loadJSON(OVERRIDES_KEY, {});
+    overrides[word] = candidate ? { local_id: candidate.local_id, 뜻풀이: candidate.뜻풀이 } : null;
+    writeStorage(OVERRIDES_KEY, JSON.stringify(overrides));
+    writeStorage(REVIEW_KEY, JSON.stringify(loadJSON(REVIEW_KEY, []).filter((item) => item.표제어 !== word)));
+    renderReview();
+    rerender();
+  }
+}
+
+$("#open-review").addEventListener("click", () => {
+  $("#settings").close();
+  renderReview();
+  openDialog($("#review"));
+});
+
 $("#hint-report").addEventListener("click", () => {
   const surface = card.dataset.surface;
   if (!surface) return;
   const reports = loadReports().filter((report) => report.surface !== surface);
   reports.push({ surface, shown: card.dataset.pronunciation || null, date: today() });
   writeStorage(FEEDBACK_KEY, JSON.stringify(reports.slice(-200)));
+  updateReviewButton();
   hideCard();
   setStatus(`‘${surface}’ 힌트를 신고했어요. 이 기기에서는 다시 보이지 않아요.`);
   activeAssist?.handleMessage({ type: "READSEED_UPDATE_SETTINGS", settings: assistSettings() }, () => ({ text: "" }));
@@ -1473,7 +1590,7 @@ $("#clear-notebook").addEventListener("click", (event) => confirmTwice(event.cur
   updateNotebookTile();
 }));
 $("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentTarget, "모든 기록 지우기", () => {
-  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY]) {
+  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY]) {
     try { localStorage.removeItem(key); } catch (_error) { /* nothing stored */ }
   }
   location.reload();
@@ -1616,6 +1733,7 @@ $("#notebook-open").addEventListener("click", () => {
 });
 applySettings();
 showServerStatus();
+updateReviewButton();
 // First run: the guardian notice comes before anything is sent anywhere.
 if (!readStorage(CONSENT_KEY)) openDialog($("#consent"));
 else if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));

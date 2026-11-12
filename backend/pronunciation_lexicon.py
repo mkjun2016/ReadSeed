@@ -89,6 +89,7 @@ def build(database: Path = DATABASE, output: Path = LEXICON, workers: int = 8) -
         by_key.setdefault(key, []).append(value)
     lexicon: dict[str, dict] = {}
     conflicts = set()
+    ambiguous: dict[str, dict] = {}
     for key, values in by_key.items():
         irregular = [v for v in values if not v["_regular"]]
         if not irregular:
@@ -96,22 +97,51 @@ def build(database: Path = DATABASE, output: Path = LEXICON, workers: int = 8) -
         # 동형어끼리 발음이 다르면(장기 長期[장기]·將棋[장끼]) 문맥 없이 정할 수 없어 규칙에 맡긴다.
         if any(not same(v["발음"], irregular[0]["발음"]) for v in values):
             conflicts.add(key)
+            options = []
+            for v in values:
+                if not any(same(v["발음"], o) for o in options):
+                    options.append(v["발음"])
+            ambiguous[key] = {"발음들": options, "entry_ids": [v["entry_id"] for v in values]}
             continue
         lexicon[key] = {k: irregular[0][k] for k in ("발음", "entry_id", "품사")}
     payload = {
         "source": "국립국어원 한국어기초사전 (표제어 발음)",
         "note": "규칙(g2pkk+자체 보정) 결과와 사전 발음이 다른 표제어만 담는다. 동형어 발음 충돌은 제외.",
         "entries": dict(sorted(lexicon.items())),
+        # 동형어끼리 발음이 갈리는 낱말(장기 長期[장기]·將棋[장끼]). 하나를 고르지 않고
+        # 두 발음을 함께 보여 주어 사람(아이·교사)이 문맥으로 확인하게 한다.
+        "ambiguous": dict(sorted(ambiguous.items())),
     }
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=0), encoding="utf-8")
     return {"rows": len(rows), "lexicon": len(lexicon), "conflicts_dropped": len(conflicts)}
 
 
 @lru_cache(maxsize=1)
-def _load() -> dict:
+def _payload() -> dict:
     if not LEXICON.is_file():
         return {}
-    return json.loads(LEXICON.read_text(encoding="utf-8"))["entries"]
+    return json.loads(LEXICON.read_text(encoding="utf-8"))
+
+
+def _load() -> dict:
+    return _payload().get("entries", {})
+
+
+def _load_ambiguous() -> dict:
+    return _payload().get("ambiguous", {})
+
+
+def lookup_ambiguous(word: str):
+    """뜻에 따라 발음이 갈리는 사전 낱말로 시작하면 (낱말, 항목, 꼬리)."""
+    entries = _load_ambiguous()
+    for end in range(len(word), 1, -1):
+        head, tail = word[:end], word[end:]
+        if len(tail) > MAX_SUFFIX:
+            break
+        item = entries.get(head)
+        if item and (not tail or TAIL.match(tail)):
+            return head, item, tail
+    return None
 
 
 def lookup(word: str):

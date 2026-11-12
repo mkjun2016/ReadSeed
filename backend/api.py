@@ -24,6 +24,7 @@ MAX_SENTENCE_CHARS = 1000
 class AnnotateRequest(BaseModel):
     sentence: str = Field(..., min_length=1, description="분석할 문장")
     use_llm: bool = Field(True, description="False면 문장을 외부 AI로 보내지 않고 규칙만 쓴다")
+    profile: dict[str, str] = Field(default_factory=dict, description="아이의 음운변동 유형별 상태(struggle/mastered). 글 내용 없음")
 
 
 class PageLine(BaseModel):
@@ -32,6 +33,7 @@ class PageLine(BaseModel):
     y: float
     w: float
     h: float
+    confidence: float = Field(1.0, description="OCR 줄 신뢰도(글자 PDF는 1.0)")
 
 
 class ReflowRequest(BaseModel):
@@ -110,7 +112,7 @@ def explain(request: AnnotateRequest) -> dict[str, Any]:
         raise HTTPException(status_code=413, detail=f"sentence is longer than {MAX_SENTENCE_CHARS} characters")
     from pipeline import explain_sentence
 
-    return explain_sentence(sentence, use_llm=request.use_llm)
+    return explain_sentence(sentence, use_llm=request.use_llm, profile=request.profile)
 
 
 @app.post("/key-info")

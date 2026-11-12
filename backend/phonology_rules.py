@@ -216,6 +216,44 @@ def _relink(word: str, pronounced: str) -> str | None:
     return None
 
 
+def _join_tail(head: str, said: str, tail: str, g2p: G2p) -> str:
+    """사전 발음 + 조사·어미: 끝 받침은 표기대로 되돌리고 경계에만 규칙을 적용한다."""
+    if not tail:
+        return said
+    spelled_last, said_last = h2j(head[-1]), h2j(said[-1])
+    last = compose(said_last[:2] + spelled_last[2:])
+    return said[:-1] + g2p(last + tail)
+
+
+def _ambiguous(word: str, g2p: G2p) -> dict | None:
+    """동형어끼리 발음이 다른 낱말은 하나를 고르지 않고 사람이 확인하도록 표시한다."""
+    import pronunciation_lexicon
+
+    hit = pronunciation_lexicon.lookup_ambiguous(word)
+    if not hit:
+        return None
+    head, item, tail = hit
+    options = [_join_tail(head, said, tail, g2p) for said in item["발음들"]]
+    plain = g2p(word)
+    if any(option == plain for option in options):
+        # 한 뜻은 규칙대로 읽히면(경기[경기]/경기[경끼]) 매번 묻는 대신 규칙 결과를 쓴다.
+        # 확인 표시는 어느 뜻이든 소리가 표기와 달라 아이가 막힐 때만 한다(막히는 지점에만).
+        return None
+    return {
+        "표기": word,
+        "발음": " / ".join(options),
+        "다름": True,
+        "유형": "확인 필요",
+        "유형전체": ["확인 필요"],
+        "조항": ["사전"],
+        # 정답 하나를 고른 게 아니므로 발음 주석으로 확정 표시하지 않는다(평가에서도 미표시).
+        "신뢰": False,
+        "확인필요": True,
+        "후보발음": options,
+        "근거": {"출처": "국립국어원 한국어기초사전(동형어)", "표제어": head, "entry_id": ",".join(item["entry_ids"])},
+    }
+
+
 def _from_lexicon(word: str, g2p: G2p) -> dict | None:
     """규칙으로 계산할 수 없는 낱말(사잇소리·한자어 된소리·ㄴ 첨가)은 사전 발음을 쓴다."""
     import pronunciation_lexicon
@@ -283,6 +321,9 @@ def classify(word: str, g2p: G2p, use_lexicon: bool = True) -> dict:
         }
 
     if use_lexicon:
+        unsure = _ambiguous(word, g2p)
+        if unsure:
+            return unsure
         lexical = _from_lexicon(word, g2p)
         if lexical:
             return lexical

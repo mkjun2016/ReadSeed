@@ -71,6 +71,33 @@ def _group_blocks(lines: list[dict]) -> list[list[dict]]:
     return blocks
 
 
+# OCR(macOS Vision) 줄 신뢰도는 1.0 또는 0.5처럼 거칠다. 1.0 미만인 줄이 섞인 문단은
+# 글자를 잘못 읽었을 수 있어 힌트를 쉬고, 원래 쪽과 비교해 보라고 안내한다.
+UNCERTAIN_BELOW = 1.0
+
+
+def _paragraph_confidence(block: list[dict], aspect: float) -> list[bool]:
+    """_paragraphs와 같은 문단 나눔으로, 문단마다 낮은 신뢰도 줄이 있는지 돌려준다."""
+    flags: list[bool] = []
+    left = min(line["x"] for line in block)
+    right = max(line["x"] + line["w"] for line in block)
+    char_width = median(line["h"] for line in block) / max(aspect, 0.1)
+    gaps = [b["y"] - a["y"] for a, b in zip(block, block[1:])]
+    pitch = median(gaps) if gaps else 0
+    for index, line in enumerate(block):
+        low = float(line.get("confidence", 1.0)) < UNCERTAIN_BELOW
+        if index:
+            previous = block[index - 1]
+            indented = line["x"] - left > 0.5 * char_width
+            spaced_out = pitch and line["y"] - previous["y"] > 1.6 * pitch
+            short_end = previous["x"] + previous["w"] < right - 3 * char_width and previous["text"].rstrip().endswith(_SPACE_AFTER)
+            if not (indented or spaced_out or short_end):
+                flags[-1] = flags[-1] or low
+                continue
+        flags.append(low)
+    return flags
+
+
 def _paragraphs(block: list[dict], aspect: float) -> list[str]:
     left = min(line["x"] for line in block)
     right = max(line["x"] + line["w"] for line in block)
@@ -119,5 +146,6 @@ def reflow(lines: list[dict], aspect: float = 1.0, spread: bool = False) -> list
             "w": max(line["x"] + line["w"] for line in block) - x,
             "h": max(line["y"] + line["h"] for line in block) - y,
             "paragraphs": _paragraphs(block, aspect),
+            "uncertain": _paragraph_confidence(block, aspect),
         })
     return result

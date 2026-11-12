@@ -120,6 +120,17 @@
       <button id="safety-close" class="primary-button" type="button">알겠어요, 글 읽기</button>
     </div>
 
+    <dialog id="review" class="sheet" aria-labelledby="review-title">
+      <form method="dialog">
+        <header class="sheet-head">
+          <h2 id="review-title">선생님 검토</h2>
+          <button class="text-button" value="close">닫기</button>
+        </header>
+        <p class="report-note">AI가 확신하지 못해 아이에게 보여 주지 않은 뜻과, 아이가 신고한 힌트예요. 고른 결과는 이 기기에서 다음 읽기부터 적용돼요.</p>
+        <div id="review-body" class="review-body"></div>
+      </form>
+    </dialog>
+
     <dialog id="trace" class="sheet" aria-labelledby="trace-title">
       <form method="dialog">
         <header class="sheet-head">
@@ -214,6 +225,7 @@
           <div class="privacy-actions">
             <button id="clear-notebook" class="text-button" type="button">낱말 공책 지우기</button>
             <button id="clear-all" class="text-button danger" type="button">모든 기록 지우기</button>
+            <button id="open-review" class="text-button" type="button">선생님 검토</button>
             <button id="export-feedback" class="text-button" type="button">사용 기록·신고 내보내기(익명)</button>
           </div>
         </fieldset>

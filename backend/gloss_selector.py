@@ -4,10 +4,12 @@
 LLM이 설정되지 않았거나 응답이 불확실하면 보수적으로 주석을 표시하지 않는다.
 """
 
+import contextvars
 import hashlib
 import json
 import os
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -29,11 +31,60 @@ MAX_CANDIDATES_PER_WORD = int(os.getenv("GLOSS_LLM_MAX_CANDIDATES_PER_WORD", "4"
 
 @dataclass(frozen=True)
 class Selection:
-    """선택 결과. ``candidate``는 반드시 입력 후보 중 하나이거나 None이다."""
+    """선택 결과. ``candidate``는 반드시 입력 후보 중 하나이거나 None이다.
+
+    ``suggestion``은 AI가 골랐지만 확신이 기준보다 낮아 표시하지 않은 후보다.
+    화면에는 띄우지 않고, 사람(교사·보호자)이 검토할 목록으로만 보낸다.
+    """
 
     candidate: Optional[dict]
     reason: str
     confidence: float = 0.0
+    suggestion: Optional[dict] = None
+
+
+# ---- 작동 기록: 요청 하나 안에서 일어난 도구 호출·재시도·대체를 모은다 ----
+_events: contextvars.ContextVar = contextvars.ContextVar("gloss_events", default=None)
+
+
+def start_trace() -> list:
+    sink: list = []
+    _events.set(sink)
+    return sink
+
+
+def _log(event: dict) -> None:
+    sink = _events.get()
+    if sink is not None:
+        sink.append(event)
+
+
+# ---- 실패 처리: 재시도(지수 백오프)와 연속 실패 차단(circuit breaker) ----
+LLM_RETRIES = int(os.getenv("GLOSS_LLM_RETRIES", "2"))
+LLM_BACKOFF_SECONDS = float(os.getenv("GLOSS_LLM_BACKOFF_SECONDS", "0.6"))
+CIRCUIT_FAILURES = int(os.getenv("GLOSS_LLM_CIRCUIT_FAILURES", "3"))
+CIRCUIT_COOLDOWN_SECONDS = float(os.getenv("GLOSS_LLM_CIRCUIT_COOLDOWN", "60"))
+_circuit = {"failures": 0, "open_until": 0.0}
+
+
+def circuit_open() -> bool:
+    return time.monotonic() < _circuit["open_until"]
+
+
+def reset_circuit() -> None:
+    _circuit.update(failures=0, open_until=0.0)
+
+
+def _record_failure(reason: str) -> None:
+    _circuit["failures"] += 1
+    if _circuit["failures"] >= CIRCUIT_FAILURES:
+        _circuit["open_until"] = time.monotonic() + CIRCUIT_COOLDOWN_SECONDS
+        _log({"단계": "실패 처리", "도구": "circuit breaker", "판단": f"AI 연속 실패 {_circuit['failures']}회 → {int(CIRCUIT_COOLDOWN_SECONDS)}초 동안 규칙만 사용"})
+    _log({"단계": "실패 처리", "도구": "LLM", "판단": f"호출 실패({reason})"})
+
+
+def _record_success() -> None:
+    _circuit["failures"] = 0
 
 
 def clear_cache() -> None:
@@ -52,6 +103,8 @@ def _load_persistent(key: str, candidates: list[dict]) -> Optional[Selection]:
     if not row:
         return None
     candidate = next((item for item in candidates if item.get("_local_id") == row[0]), None)
+    if row[2] == "llm_uncertain":
+        return Selection(None, row[2], row[1], suggestion=candidate)
     return Selection(candidate, row[2], row[1])
 
 
@@ -63,7 +116,7 @@ def _store_selection(key: str, selection: Selection) -> None:
         CACHE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(CACHE_DB_PATH) as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS decisions (cache_key TEXT PRIMARY KEY, local_id TEXT, confidence REAL, reason TEXT)")
-            connection.execute("INSERT OR REPLACE INTO decisions VALUES (?, ?, ?, ?)", (key, selection.candidate.get("_local_id") if selection.candidate else None, selection.confidence, selection.reason))
+            connection.execute("INSERT OR REPLACE INTO decisions VALUES (?, ?, ?, ?)", (key, (selection.candidate or selection.suggestion or {}).get("_local_id"), selection.confidence, selection.reason))
     except sqlite3.Error:
         pass
 
@@ -160,8 +213,117 @@ def _request_llm(sentence: str, word: str, pos: str, candidates: list[dict]) -> 
     return _call_llm(prompt, 120)
 
 
-def _call_llm(prompt: dict, max_tokens: int) -> Optional[dict]:
-    """공통 API 호출부. 배치해도 한 문장당 요청은 한 번이다."""
+# Claude 도구 호출: AI는 뜻을 새로 쓰지 못하고, 근거가 필요하면 get_sense_details로
+# 사전 정보(난이도·분야·품사)를 조회한 뒤 submit_decisions로만 답한다.
+TOOLS = [
+    {
+        "name": "get_sense_details",
+        "description": "후보 뜻의 사전 정보(어휘 난이도, 전문 분야, 품사, 한자)를 조회한다. 초등 3~4학년에게 풀이가 필요한지 판단할 때 쓴다.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"item_index": {"type": "integer"}, "candidate_indexes": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["item_index", "candidate_indexes"],
+        },
+    },
+    {
+        "name": "submit_decisions",
+        "description": "낱말마다 보여 줄 후보 번호 하나 또는 hide를 제출한다. 확신이 낮거나 맞는 후보가 없으면 hide.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item_index": {"type": "integer"},
+                            "decision": {"type": "string", "enum": ["show", "hide"]},
+                            "candidate_index": {"type": ["integer", "null"]},
+                            "confidence": {"type": "number"},
+                        },
+                        "required": ["item_index", "decision", "candidate_index", "confidence"],
+                    },
+                }
+            },
+            "required": ["decisions"],
+        },
+    },
+]
+MAX_TOOL_ROUNDS = 2
+
+
+def _post_with_retry(url: str, headers: dict, payload: dict) -> Optional[dict]:
+    """일시 오류(시간 초과·429·5xx)는 지수 백오프로 재시도하고, 끝내 실패하면 None."""
+    for attempt in range(LLM_RETRIES + 1):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            if response.status_code in (429, 500, 502, 503, 504, 529):
+                raise requests.exceptions.HTTPError(f"HTTP {response.status_code}")
+            response.raise_for_status()
+            _record_success()
+            return response.json()
+        except requests.exceptions.RequestException as exc:
+            if attempt < LLM_RETRIES:
+                wait = LLM_BACKOFF_SECONDS * (2 ** attempt)
+                _log({"단계": "실패 처리", "도구": "LLM", "판단": f"{type(exc).__name__} → {wait:.1f}초 뒤 재시도({attempt + 1}/{LLM_RETRIES})"})
+                time.sleep(wait)
+                continue
+            _record_failure(type(exc).__name__)
+            return None
+    return None
+
+
+def _call_claude_with_tools(prompt: dict, items_candidates: dict[int, list[dict]], max_tokens: int) -> Optional[dict]:
+    headers = {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    messages = [{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
+    for round_index in range(MAX_TOOL_ROUNDS + 1):
+        last_round = round_index == MAX_TOOL_ROUNDS
+        payload = {
+            "model": os.environ["GLOSS_LLM_MODEL"],
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "system": "You choose dictionary senses for a children's reading aid. Never write definitions. Use the tools only.",
+            "tools": TOOLS,
+            "tool_choice": {"type": "tool", "name": "submit_decisions"} if last_round else {"type": "any"},
+            "messages": messages,
+        }
+        body = _post_with_retry("https://api.anthropic.com/v1/messages", headers, payload)
+        if body is None:
+            return None
+        blocks = body.get("content", [])
+        calls = [b for b in blocks if b.get("type") == "tool_use"]
+        final = next((b for b in calls if b.get("name") == "submit_decisions"), None)
+        if final:
+            _log({"단계": "AI 도구 호출", "도구": "submit_decisions", "판단": f"{len(final['input'].get('decisions', []))}낱말 결정 제출"})
+            return final["input"]
+        results = []
+        for call in calls:
+            if call.get("name") != "get_sense_details":
+                continue
+            args = call.get("input", {})
+            candidates = items_candidates.get(args.get("item_index"), [])
+            details = [
+                {"candidate_index": i, "level": candidates[i].get("난이도"), "field": candidates[i].get("분야"), "pos": candidates[i].get("품사"), "hanja": candidates[i].get("한자")}
+                for i in args.get("candidate_indexes", []) if isinstance(i, int) and 0 <= i < len(candidates)
+            ]
+            _log({"단계": "AI 도구 호출", "도구": "get_sense_details", "판단": f"낱말 {args.get('item_index')}의 후보 {len(details)}개 사전 정보 조회"})
+            results.append({"type": "tool_result", "tool_use_id": call["id"], "content": json.dumps(details, ensure_ascii=False)})
+        if not results:
+            return None
+        messages += [{"role": "assistant", "content": blocks}, {"role": "user", "content": results}]
+    return None
+
+
+def _call_llm(prompt: dict, max_tokens: int, items_candidates: Optional[dict] = None) -> Optional[dict]:
+    """공통 API 호출부. 배치해도 한 문장당 요청은 한 번이다(도구 조회는 최대 2번 더)."""
+    if circuit_open():
+        _log({"단계": "실패 처리", "도구": "circuit breaker", "판단": "차단 중 → AI 호출 생략, 규칙으로 대체"})
+        return None
+    if os.getenv("GLOSS_LLM_PROVIDER") == "anthropic" and items_candidates is not None:
+        try:
+            return _call_claude_with_tools(prompt, items_candidates, max_tokens + 200)
+        except (KeyError, TypeError, ValueError):
+            return None
     try:
         if os.getenv("GLOSS_LLM_PROVIDER") == "anthropic":
             response = requests.post(
@@ -227,7 +389,7 @@ def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict
             for item_index, word, pos, candidates in items
         ],
     }
-    answer = _call_llm(prompt, 60 + 35 * len(items))
+    answer = _call_llm(prompt, 60 + 35 * len(items), {item_index: candidates for item_index, _, _, candidates in items})
     if not answer or not isinstance(answer.get("decisions"), list):
         return [None] * len(items)
     by_index = {item.get("item_index"): item for item in answer["decisions"] if isinstance(item, dict)}
@@ -277,7 +439,16 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         except (AttributeError, TypeError, ValueError):
             valid = False
             confidence = 0.0
-        selection = Selection(candidates[index], "llm_selected", confidence) if valid else Selection(None, "llm_uncertain", confidence)
-        _store_selection(key, selection)
+        if valid:
+            selection = Selection(candidates[index], "llm_selected", confidence)
+        elif answer is None:
+            selection = Selection(None, "llm_failed")
+        elif answer.get("decision") == "hide":
+            selection = Selection(None, "llm_hidden", confidence)
+        else:
+            suggested = candidates[index] if isinstance(index, int) and 0 <= index < len(candidates) and answer.get("decision") == "show" else None
+            selection = Selection(None, "llm_uncertain", confidence, suggestion=suggested)
+        if answer is not None:
+            _store_selection(key, selection)
         results[item_index] = selection
     return [result if result is not None else Selection(None, "llm_uncertain") for result in results]
