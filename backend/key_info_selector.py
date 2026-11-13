@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+
+import ai_budget
 from dotenv import load_dotenv
 
 
@@ -66,6 +68,8 @@ def select(sentences: list[str]) -> list[int]:
         ],
         "sentences": [{"index": index, "text": sentence[:500]} for index, sentence in enumerate(sentences)],
     }
+    if not ai_budget.take():
+        return []
     try:
         response = requests.post(
             "https://api.anthropic.com/v1/messages",

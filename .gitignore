@@ -12,3 +12,7 @@ backend/data/key_sentence_decisions.sqlite3
 backend/data/krdict_pronunciation.jsonl
 backend/results/
 backend/labeling/
+
+# 공개 배포: setup-tunnel.sh가 만드는 이 맥 전용 설정
+deploy/cloudflared.yml
+deploy/.public-host

@@ -18,6 +18,7 @@ const SESSIONS_KEY = "readseedWebSessions";
 // Human-in-the-loop: senses the AI was unsure about wait here for a teacher, and the
 // teacher's choices are applied to later readings on this device.
 const REVIEW_KEY = "readseedWebReviewQueue";
+const PLAN_KEY = "readseedWebPlanDemo"; // subscription demo state, written by plans.html
 const OVERRIDES_KEY = "readseedWebGlossOverrides";
 let readingStarted = 0;
 let readingTitle = "";
@@ -225,7 +226,10 @@ function setStatus(text) {
 function reportResult(summary, failed, results = []) {
   if (failed && !summary.pronunciation && !summary.gloss) {
     const tooLong = results.some((result) => /longer than/.test(result?.error || ""));
-    setStatus(tooLong ? "문장이 너무 길어서 힌트를 만들지 못했어요. 문장을 나눠 주세요." : "힌트 서버에 연결하지 못했어요. 서버가 켜져 있는지 확인한 뒤 다시 열어 주세요.");
+    const busy = results.some((result) => /too many/.test(result?.error || ""));
+    setStatus(tooLong ? "문장이 너무 길어서 힌트를 만들지 못했어요. 문장을 나눠 주세요."
+      : busy ? "지금 사용하는 사람이 많아요. 1분 뒤에 다시 열어 주세요."
+      : "힌트 서버에 연결하지 못했어요. 서버가 켜져 있는지 확인한 뒤 다시 열어 주세요.");
     return;
   }
   const parts = [];
@@ -1636,7 +1640,7 @@ $("#clear-notebook").addEventListener("click", (event) => confirmTwice(event.cur
   updateNotebookTile();
 }));
 $("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentTarget, "모든 기록 지우기", () => {
-  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY, TIP_KEY]) {
+  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY, TIP_KEY, PLAN_KEY]) {
     try { localStorage.removeItem(key); } catch (_error) { /* nothing stored */ }
   }
   location.reload();
@@ -1808,6 +1812,7 @@ $("#notebook-open").addEventListener("click", () => {
   renderNotebook();
   openDialog($("#report"));
 });
+$("#home-plan-state").hidden = !readStorage(PLAN_KEY);
 applySettings();
 showServerStatus();
 updateReviewButton();

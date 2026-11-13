@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+
+import ai_budget
 from dotenv import load_dotenv
 
 
@@ -254,6 +256,10 @@ MAX_TOOL_ROUNDS = 2
 
 def _post_with_retry(url: str, headers: dict, payload: dict) -> Optional[dict]:
     """일시 오류(시간 초과·429·5xx)는 지수 백오프로 재시도하고, 끝내 실패하면 None."""
+    if not ai_budget.take():
+        # 오늘 AI 상한에 닿았다. 실패로 세지 않고(차단기를 열지 않고) 규칙으로 넘어간다.
+        _log({"단계": "실패 처리", "도구": "하루 AI 상한", "판단": f"오늘 {ai_budget.limit()}회를 다 써서 규칙만 사용"})
+        return None
     for attempt in range(LLM_RETRIES + 1):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=10)
