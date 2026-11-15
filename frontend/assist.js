@@ -14,7 +14,7 @@
   const BLOCK_SELECTOR = "p, li, blockquote, dd, dt, td, th, h1, h2, h3, h4, h5, h6";
   const SPACE_CLASS = "readseed-annotation-space";
   const DEFAULT_SETTINGS = {
-    pronunciation: true, gloss: true, keyInfo: true, readingGuide: false,
+    pronunciation: true, gloss: true, readingGuide: false,
     annotationSize: "medium", density: "medium", readingSpeed: "normal", reveal: "always",
   };
   const GLOSS_MAX_LENGTH = 24;
@@ -37,7 +37,7 @@
   } = {}) {
     const win = doc.defaultView;
     const state = {
-      root: null, entries: [], keyEntries: [], contentRoot: null, targetRange: null,
+      root: null, entries: [], contentRoot: null, targetRange: null,
       spacedElements: new Map(), frame: null, lastResults: [], settings: { ...DEFAULT_SETTINGS },
     };
     const reading = { ranges: [], index: 0, timer: null, playing: false, highlight: null, controls: null };
@@ -143,7 +143,6 @@
       });
       state.root = null;
       state.entries = [];
-      state.keyEntries = [];
       state.spacedElements.clear();
       if (!keepResults) state.lastResults = [];
       clearReadingGuide();
@@ -241,32 +240,6 @@
       };
     }
 
-    function renderKeyHighlights(nodes, text, results, keySentenceIndexes = []) {
-      if (!state.settings.keyInfo) return;
-      let cursor = 0;
-      for (const index of [...new Set(keySentenceIndexes)].sort((a, b) => a - b)) {
-        const sentence = results[index]?.sentence;
-        if (!sentence) continue;
-        const match = findSentence(text, sentence, cursor);
-        if (!match) continue;
-        const range = rangeForText(nodes, match.start, match.end);
-        if (range) state.keyEntries.push({ range, boxes: [] });
-        cursor = match.end;
-      }
-    }
-
-    // Sentences are split from rendered text, where a line break may have become a
-    // space (PDF lines, <br>), while the text nodes may hold no space there at all.
-    function findSentence(text, sentence, from) {
-      const exact = text.indexOf(sentence, from);
-      if (exact >= 0) return { start: exact, end: exact + sentence.length };
-      const escaped = sentence.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      const pattern = new RegExp(escaped.join("\\s*"), "g");
-      pattern.lastIndex = from;
-      const match = pattern.exec(text);
-      return match ? { start: match.index, end: match.index + match[0].length } : null;
-    }
-
     function glossText(word, gloss) {
       // Dictionary headwords mark morpheme joins with "-" and spaces with "^".
       const head = (gloss.표제어 || word.표기 || word.어절).replace(/\^/g, " ").replace(/-/g, "");
@@ -280,7 +253,7 @@
       state.lastResults = results;
       state.settings = { ...DEFAULT_SETTINGS, ...settings };
       const { nodes, text } = collectTextNodes();
-      if (!nodes.length) return { pronunciation: 0, gloss: 0, keyInfo: 0 };
+      if (!nodes.length) return { pronunciation: 0, gloss: 0 };
 
       const layer = doc.createElement("div");
       layer.id = "readseed-overlay";
@@ -298,7 +271,6 @@
         const firstGloss = Array.isArray(word.뜻풀이후보) ? word.뜻풀이후보[0] : null;
         if (state.settings.gloss && firstGloss?.뜻풀이) createLabel("below", glossText(word, firstGloss), range, word);
       });
-      renderKeyHighlights(nodes, text, results, state.settings.keySentenceIndexes);
       // Measure label positions only after the spacing classes have reflowed the text.
       updateOverlayPositions();
       if (state.settings.readingGuide) startReadingGuide();
@@ -388,16 +360,6 @@
         if (entry.label.dataset.visible !== "true") entry.label.style.display = "none";
       }
 
-      for (const entry of state.keyEntries) {
-        entry.boxes.forEach((box) => box.remove());
-        entry.boxes = mergeLineRects(entry.range.getClientRects()).map((rect) => {
-          const box = doc.createElement("span");
-          box.className = "readseed-key-highlight";
-          Object.assign(box.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-          state.root.append(box);
-          return box;
-        });
-      }
       updateReadingHighlight();
     }
 
@@ -422,7 +384,6 @@
       return {
         pronunciation: state.entries.filter((entry) => entry.kind === "above").length,
         gloss: state.entries.filter((entry) => entry.kind === "below").length,
-        keyInfo: state.keyEntries.length,
       };
     }
 
@@ -546,11 +507,7 @@
             return { ok: false, error: "읽기 보조 정보를 표시하지 못했습니다." };
           }
         case "READSEED_UPDATE_SETTINGS":
-          // A settings change re-renders the last analysis; keep the key sentences
-          // chosen for it, which the toolbar only sends with a fresh analysis.
-          return { ok: true, ...renderAssistance(state.lastResults, {
-            keySentenceIndexes: state.settings.keySentenceIndexes, ...(message.settings || {}),
-          }) };
+          return { ok: true, ...renderAssistance(state.lastResults, message.settings || {}) };
         case "READSEED_START_READING":
           return startReadingGuide();
         case "READSEED_STOP_READING":
@@ -564,5 +521,99 @@
     return { setTarget, clearOverlay, renderAssistance, handleMessage, scheduleOverlayPositionUpdate, wordAt };
   }
 
-  globalThis.ReadSeedAssist = { create, normalizeText, EXCLUDED_SELECTORS, BLOCK_SELECTOR, DEFAULT_SETTINGS };
+
+  // A tap card shared by every host page (web pages and the extension's PDF viewer).
+  // It lives in a shadow root, so the page's own styles cannot reach it, and it sits
+  // above the page like the overlay: the original text is never touched.
+  const CARD_STYLE = `
+    :host { all: initial; }
+    .card { position: fixed; z-index: 2147483645; box-sizing: border-box; width: min(340px, calc(100vw - 24px)); padding: 18px 18px 14px;
+      border-radius: 20px; background: #fff; color: rgba(0,0,0,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16);
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+      word-break: keep-all; overflow-wrap: anywhere; animation: rise 150ms cubic-bezier(.3,0,0,1); }
+    .card[hidden] { display: none; }
+    .word { margin: 0 32px 10px 0; font-size: 24px; font-weight: 800; letter-spacing: .01em; }
+    .close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border: 0; border-radius: 10px; background: transparent;
+      color: rgba(0,0,0,.45); font: 700 20px/1 system-ui, sans-serif; cursor: pointer; }
+    .close:hover { background: rgba(0,0,0,.05); }
+    .box { margin: 8px 0 0; padding: 8px 14px; border-radius: 12px; }
+    .box small { display: block; color: rgba(0,0,0,.55); font-size: 12px; font-weight: 600; }
+    .box small + span + small { margin-top: 8px; }
+    .box span { display: block; }
+    .sound { background: oklch(0.955 0.03 280); color: oklch(0.45 0.21 280); font-size: 24px; font-weight: 800; }
+    .meaning { background: oklch(0.955 0.035 175); color: oklch(0.40 0.10 175); font-size: 16px; font-weight: 600; }
+    .basis { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); color: rgba(0,0,0,.5); font-size: 12.5px; }
+    @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+    @media (prefers-reduced-motion: reduce) { .card { animation: none; } }`;
+
+  function headword(gloss) {
+    return (gloss?.표제어 || "").replace(/\^/g, " ").replace(/-/g, "");
+  }
+
+  function createHintCard({ document: doc = document, topInset = 0 } = {}) {
+    const host = doc.createElement("readseed-card");
+    const root = host.attachShadow({ mode: "open" });
+    const style = doc.createElement("style");
+    style.textContent = CARD_STYLE;
+    const card = doc.createElement("div");
+    card.className = "card";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-live", "polite");
+    card.hidden = true;
+    root.append(style, card);
+    (doc.body || doc.documentElement).append(host);
+
+    const el = (tag, className, ...children) => {
+      const node = doc.createElement(tag);
+      if (className) node.className = className;
+      node.append(...children.filter((child) => child !== null && child !== undefined));
+      return node;
+    };
+
+    function hide() {
+      card.hidden = true;
+    }
+
+    // `info` is what assist.wordAt() returns. A word built from several dictionary
+    // words (장애학생지원센터) only has meanings for its parts, so each one is labelled
+    // with the part it explains instead of posing as the meaning of the whole word.
+    function show(info) {
+      const glosses = info.gloss ? (info.word?.뜻풀이후보 || []).filter((gloss) => gloss?.뜻풀이) : [];
+      const parts = glosses[0]?.부분 ? glosses.slice(0, 2) : glosses.slice(0, 1);
+      const close = el("button", "close", "×");
+      close.type = "button";
+      close.setAttribute("aria-label", "닫기");
+      close.addEventListener("click", hide);
+      const children = [close, el("p", "word", info.surface)];
+      if (info.pronunciation) children.push(el("p", "box sound", el("small", "", "이렇게 읽어요"), `[${info.pronunciation}]`));
+      if (parts.length) {
+        children.push(el("p", "box meaning", ...parts.flatMap((gloss) => [
+          el("small", "", gloss.부분 ? `‘${headword(gloss)}’의 뜻` : "쉬운 뜻"),
+          el("span", "", gloss.뜻풀이.replace(/\s+/g, " ").trim()),
+        ])));
+      }
+      const basis = [];
+      const sound = info.word?.근거?.발음;
+      if (info.pronunciation && sound?.출처) basis.push(`읽는 법: ${sound.출처}`);
+      else if (info.pronunciation && sound?.표준발음법?.length) basis.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
+      if (parts.length) basis.push(parts[0].근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : "뜻: 한국어기초사전");
+      if (basis.length) children.push(el("p", "basis", `근거 — ${basis.join(" / ")}`));
+      card.replaceChildren(...children);
+      card.hidden = false;
+
+      const win = doc.defaultView;
+      const rect = info.rect;
+      const width = card.offsetWidth;
+      const height = card.offsetHeight;
+      const left = Math.max(12, Math.min(rect.left, win.innerWidth - width - 12));
+      const below = rect.bottom + 10;
+      const top = below + height > win.innerHeight - 8 ? rect.top - height - 10 : below;
+      card.style.left = `${left}px`;
+      card.style.top = `${Math.max(topInset + 8, top)}px`;
+    }
+
+    return { show, hide, contains: (node) => node === host || host.contains(node), remove: () => host.remove() };
+  }
+
+  globalThis.ReadSeedAssist = { create, createHintCard, normalizeText, EXCLUDED_SELECTORS, BLOCK_SELECTOR, DEFAULT_SETTINGS };
 })();

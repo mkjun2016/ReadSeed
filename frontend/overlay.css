@@ -58,14 +58,6 @@
   border-bottom: 2px dotted oklch(0.554 0.214 280 / 0.75);
 }
 
-#readseed-overlay .readseed-key-highlight {
-  position: absolute;
-  z-index: 1;
-  border-radius: 4px;
-  background: oklch(0.87 0.15 88 / 0.42);
-  box-shadow: inset 0 -2px 0 oklch(0.72 0.16 82 / 0.55);
-}
-
 /*
  * Temporary spacing on annotated blocks only. Every text line gets one label lane
  * above it and, when glosses are on, one below it, so the gap between two lines

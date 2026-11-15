@@ -157,21 +157,3 @@ body {
 
 body.dragging .pages { outline: 3px dashed oklch(1 0 0 / 0.5); outline-offset: -8px; }
 
-.word-card {
-  position: fixed;
-  z-index: 2147483000;
-  min-width: 160px;
-  max-width: min(320px, 80vw);
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 10px 28px oklch(0 0 0 / 0.22);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.word-card[hidden] { display: none; }
-.word-card .surface { margin: 0 0 6px; font-size: 18px; font-weight: 800; }
-.word-card .pronunciation { margin: 0 0 4px; color: oklch(0.42 0.20 280); font-weight: 700; }
-.word-card .gloss { margin: 0; color: oklch(0.38 0.11 170); }

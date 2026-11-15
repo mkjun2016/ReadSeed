@@ -56,16 +56,34 @@ def _overlaps(a: dict, b: dict) -> bool:
     return overlap > 0.4 * min(a["w"], b["w"])
 
 
-def _group_blocks(lines: list[dict]) -> list[list[dict]]:
+def _shares_row(line: dict, lines: list[dict]) -> bool:
+    """같은 높이에 따로 떨어진 글줄이 또 있으면 표의 칸이다."""
+    for other in lines:
+        if other is line:
+            continue
+        vertical = min(line["y"] + line["h"], other["y"] + other["h"]) - max(line["y"], other["y"])
+        if vertical > 0.5 * min(line["h"], other["h"]) and not _overlaps(line, other):
+            return True
+    return False
+
+
+def _group_blocks(lines: list[dict], aspect: float = 1.0) -> list[list[dict]]:
     line_height = median(line["h"] for line in lines)
+    char_width = line_height / max(aspect, 0.1)
+    cells = {id(line) for line in lines if _shares_row(line, lines)}
     blocks: list[list[dict]] = []
     for line in sorted(lines, key=lambda item: (item["y"], item["x"])):
         for block in blocks:
             last = block[-1]
             gap = line["y"] - (last["y"] + last["h"])
-            if _overlaps(last, line) and gap < 2.6 * line_height:
-                block.append(line)
-                break
+            if not (_overlaps(last, line) and gap < 2.6 * line_height):
+                continue
+            # 표의 칸끼리는 같은 칸 안에서 이어지는 줄(왼쪽이 맞고 간격이 좁음)만 묶는다.
+            # 아니면 위아래 행의 칸(교과목명·개설학과…)이 한 덩어리가 된다.
+            if (id(line) in cells or id(last) in cells) and (abs(line["x"] - last["x"]) > char_width or gap > 0.5 * line_height):
+                continue
+            block.append(line)
+            break
         else:
             blocks.append([line])
     return blocks
@@ -125,10 +143,14 @@ def reflow(lines: list[dict], aspect: float = 1.0, spread: bool = False) -> list
 
     `spread`는 펼친 두 쪽이 한 장에 담긴 PDF로, 왼쪽 쪽의 글을 오른쪽보다 먼저 읽는다.
     """
-    kept = [line for line in lines if line.get("text", "").strip() and not _PAGE_NUMBER.match(line["text"])]
+    # 쪽 번호는 쪽 위·아래 여백의 숫자만이다. 표 안의 '101'·'2' 같은 칸은 남긴다.
+    def page_number(line: dict) -> bool:
+        return bool(_PAGE_NUMBER.match(line["text"])) and (line["y"] < 0.08 or line["y"] + line["h"] > 0.9)
+
+    kept = [line for line in lines if line.get("text", "").strip() and not page_number(line)]
     if not kept:
         return []
-    blocks = _group_blocks(kept)
+    blocks = _group_blocks(kept, aspect)
 
     def order(block: list[dict]) -> tuple:
         x = min(line["x"] for line in block)

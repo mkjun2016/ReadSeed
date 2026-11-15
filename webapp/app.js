@@ -707,13 +707,20 @@ function textLayerLines(entry) {
     const [left, baseline] = base.convertToViewportPoint(item.transform[4], item.transform[5]);
     const height = Math.hypot(item.transform[2], item.transform[3]) || item.height;
     const top = baseline - height;
-    if (line && Math.abs(line.top - top) > height * 0.5) {
+    // Some PDF writers emit U+0001 where a space was typed.
+    const str = item.str.replace(/[\u0000-\u001f]/g, " ");
+    // A new line starts on a new baseline, or after a wide gap on the same baseline:
+    // that gap is a table cell border, and the next cell is separate text. Writers
+    // often fill such a gap with one wide space item, which also ends the cell.
+    const wideSpace = !str.trim() && item.width > height * 1.2;
+    if (line && (wideSpace || Math.abs(line.top - top) > height * 0.5 || (str.trim() && left - line.right > height * 1.6))) {
       lines.push(line);
       line = null;
     }
-    if (item.str) {
+    if (wideSpace) continue;
+    if (str) {
       line ??= { text: "", left, right: left, top, bottom: baseline };
-      line.text += item.str;
+      line.text += str;
       line.left = Math.min(line.left, left);
       line.right = Math.max(line.right, left + item.width);
       line.bottom = Math.max(line.bottom, baseline);
@@ -799,12 +806,48 @@ function patchBox(block, layout, width, height) {
   return { left, top: block.y * height - pad, width: right - left, minHeight: block.h * height + pad * 2 };
 }
 
+function patchElement(block) {
+  const patch = document.createElement("div");
+  patch.className = "reflow-patch";
+  patch.append(...block.paragraphs.map((text) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    return paragraph;
+  }));
+  return patch;
+}
+
+function patchesOverlap(patches) {
+  const boxes = patches.map((patch) => ({ left: patch.offsetLeft, top: patch.offsetTop, right: patch.offsetLeft + patch.offsetWidth, bottom: patch.offsetTop + patch.offsetHeight }));
+  return boxes.some((a, i) => boxes.slice(i + 1).some((b) => a.left < b.right - 4 && b.left < a.right - 4 && a.top < b.bottom - 4 && b.top < a.bottom - 4));
+}
+
+// Dense pages (tables, forms) have no room to enlarge text in place: the patches
+// would cover one another. There the page is set again as a plain column, row by
+// row in reading order, so nothing overlaps; '원래 쪽 보기' still shows the original.
+function renderFlow(entry, layout) {
+  const flow = document.createElement("div");
+  flow.className = "reflow-flow";
+  let row = null;
+  let rowBottom = -1;
+  for (const block of layout.blocks) {
+    if (!row || block.y >= rowBottom - 0.004) {
+      row = document.createElement("div");
+      row.className = "reflow-row";
+      flow.append(row);
+      rowBottom = block.y + block.h;
+    } else rowBottom = Math.max(rowBottom, block.y + block.h);
+    row.append(patchElement(block));
+  }
+  entry.element.append(flow);
+  entry.element.classList.add("flow-text");
+}
+
 function renderPatches(entry, layout) {
   removePatches(entry);
   const { width, height } = entry.viewport;
-  for (const block of layout.blocks) {
-    const patch = document.createElement("div");
-    patch.className = "reflow-patch";
+  const patches = layout.blocks.map((block) => {
+    const patch = patchElement(block);
     const box = patchBox(block, layout, width, height);
     Object.assign(patch.style, {
       left: `${Math.max(0, box.left)}px`,
@@ -812,20 +855,20 @@ function renderPatches(entry, layout) {
       width: `${Math.min(width, box.width)}px`,
       minHeight: `${box.minHeight}px`,
     });
-    patch.append(...block.paragraphs.map((text) => {
-      const paragraph = document.createElement("p");
-      paragraph.textContent = text;
-      return paragraph;
-    }));
     entry.element.append(patch);
-  }
+    return patch;
+  });
   entry.element.classList.add("large-text");
+  if (patchesOverlap(patches)) {
+    patches.forEach((patch) => patch.remove());
+    renderFlow(entry, layout);
+  }
   fitPage(entry);
 }
 
 function removePatches(entry) {
-  entry.element.querySelectorAll(".reflow-patch").forEach((patch) => patch.remove());
-  entry.element.classList.remove("large-text");
+  entry.element.querySelectorAll(".reflow-patch, .reflow-flow").forEach((patch) => patch.remove());
+  entry.element.classList.remove("large-text", "flow-text");
   entry.element.style.height = `${Math.floor(entry.viewport.height)}px`;
 }
 
@@ -833,7 +876,7 @@ function removePatches(entry) {
 // rather than letting the patch spill onto the next page.
 function fitPage(entry) {
   let bottom = entry.viewport.height;
-  entry.element.querySelectorAll(".reflow-patch").forEach((patch) => {
+  entry.element.querySelectorAll(":scope > .reflow-patch, :scope > .reflow-flow").forEach((patch) => {
     bottom = Math.max(bottom, patch.offsetTop + patch.offsetHeight + 16);
   });
   entry.element.style.height = `${Math.floor(bottom)}px`;
@@ -940,7 +983,8 @@ function hideCard() {
 }
 
 function showCard(info) {
-  const candidate = info.gloss ? info.word?.뜻풀이후보?.[0] : null;
+  const glosses = info.gloss ? (info.word?.뜻풀이후보 || []).filter((item) => item?.뜻풀이) : [];
+  const candidate = glosses[0] || null;
   const meaning = candidate?.뜻풀이?.replace(/\s+/g, " ").trim() || null;
   $("#hint-word").textContent = info.surface;
 
@@ -953,9 +997,7 @@ function showCard(info) {
   }
   // Pronunciation comes first; the meaning is one more tap away so the card stays small.
   const meaningElement = $("#hint-meaning");
-  const meaningCaption = document.createElement("small");
-  meaningCaption.textContent = "쉬운 뜻";
-  meaningElement.replaceChildren(...(meaning ? [meaningCaption, meaning] : []));
+  meaningElement.replaceChildren(...(meaning ? meaningParts(glosses) : []));
   meaningElement.hidden = !meaning || Boolean(info.pronunciation);
   $("#hint-more").hidden = !meaning || !info.pronunciation;
 
@@ -968,8 +1010,27 @@ function showCard(info) {
 
   card.hidden = false;
   placeCard(info.rect);
-  logTap(info, meaning, meaning && !info.pronunciation);
+  logTap(info, meaning && candidate.부분 ? `${headword(candidate)}: ${meaning}` : meaning, meaning && !info.pronunciation);
   countTipTap();
+}
+
+// A word made of several dictionary words (장애학생지원센터) has meanings only for
+// its parts, so each one says which part it explains instead of posing as the
+// meaning of the whole word.
+function headword(gloss) {
+  return (gloss.표제어 || "").replace(/\^/g, " ").replace(/-/g, "");
+}
+
+function meaningParts(glosses) {
+  const parts = glosses[0]?.부분 ? glosses.slice(0, 2) : glosses.slice(0, 1);
+  return parts.flatMap((gloss) => {
+    const caption = document.createElement("small");
+    caption.textContent = gloss.부분 ? `‘${headword(gloss)}’의 뜻` : "쉬운 뜻";
+    const text = document.createElement("span");
+    text.className = "meaning-text";
+    text.textContent = gloss.뜻풀이.replace(/\s+/g, " ").trim();
+    return [caption, text];
+  });
 }
 
 let tipTaps = 0;

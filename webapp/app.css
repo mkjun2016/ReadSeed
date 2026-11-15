@@ -423,6 +423,12 @@ body[data-mode="pdf"] .reader-tip { max-width: none; margin: 12px var(--gutter) 
 }
 .reflow-patch p:last-child { margin-bottom: 0; }
 .readseed-pdf-page.large-text { background: var(--paper); }
+/* Flow view for dense pages: the same patches, stacked row by row instead of laid
+   over their original spots, so enlarged text never covers other text. */
+.reflow-flow { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: grid; gap: 12px; padding: 24px; }
+.reflow-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.reflow-flow .reflow-patch { position: static; flex: 1 1 auto; min-width: min(100%, 8em); }
+.readseed-pdf-page.flow-text canvas, .readseed-pdf-page.flow-text .textLayer { visibility: hidden; }
 .page-number { position: absolute; right: 10px; bottom: 8px; color: var(--ink-faint); font-size: 13px; }
 
 /* PDF.js text layer: transparent text aligned over the page image. */
@@ -529,6 +535,8 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
 .hint-card p { margin: 0; }
 .hint-word { font-size: 26px; font-weight: 800; letter-spacing: 0.02em; }
 .hint-sound { margin-top: 8px !important; padding: 8px 14px; border-radius: 12px; background: var(--sound-tint); color: var(--sound); font-size: 26px; font-weight: 800; }
+.hint-meaning .meaning-text { display: block; }
+.hint-meaning .meaning-text + small { margin-top: 8px; }
 .hint-sound small, .hint-meaning small { display: block; color: var(--ink-soft); font-size: 13px; font-weight: 600; }
 .hint-meaning { margin-top: 8px !important; padding: 8px 14px; border-radius: 12px; background: var(--meaning-tint); color: var(--meaning); font-size: 18px; line-height: 1.5; font-weight: 600; }
 .hint-more { width: 100%; min-height: 48px; margin-top: 10px; border: 0; border-radius: 12px; background: var(--meaning-tint); color: var(--meaning); font-size: 17px; font-weight: 700; }

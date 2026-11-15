@@ -65,3 +65,24 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(result[1]["뜻풀이후보"][0]["뜻풀이"], "음식")
         self.assertEqual([call.args[0] for call in classifier.call_args_list], ["같이", "국밥"])
         self.assertEqual(select_many.call_args.args[1][0][:2], ("국밥", "NNG"))
+
+
+@unittest.skipUnless(pipeline.local_dictionary.is_available(), "로컬 기초사전이 필요합니다")
+class CompoundWordTest(unittest.TestCase):
+    def lemmas(self, text):
+        return pipeline._content_lemmas([(t.form, t.tag) for t in pipeline.kiwi.tokenize(text)])
+
+    def test_longest_dictionary_compound_wins(self):
+        self.assertIn(("부정행위", "NNG"), self.lemmas("부정행위를"))
+
+    def test_unknown_compound_splits_into_dictionary_nouns(self):
+        self.assertEqual([form for form, _ in self.lemmas("점성유동")], ["점성", "유동"])
+
+    def test_person_name_is_not_split(self):
+        self.assertIsNone(pipeline._split_unknown_proper("이치영"))
+
+    def test_part_glosses_are_marked_as_parts(self):
+        with patch.object(pipeline.gloss_selector, "_llm_configured", return_value=False):
+            word = next(r for r in pipeline.annotate_sentence("관 내 점성유동에 관하여", use_llm=False) if r["어절"].startswith("점성"))
+        self.assertTrue(word["합성"])
+        self.assertTrue(all(gloss["부분"] for gloss in word["뜻풀이후보"]))

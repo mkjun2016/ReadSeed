@@ -12,7 +12,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/pdf
 const pagesElement = document.querySelector("#pages");
 const toolbarFrame = document.querySelector("#readseed-toolbar-frame");
 const notice = document.querySelector("#notice");
-const card = document.querySelector("#word-card");
 const params = new URLSearchParams(location.search);
 const source = params.get("src") || "";
 const assist = create({ fixedLayout: true, blockSelector: ".readseed-pdf-page", textSelector: ".textLayer span" });
@@ -161,26 +160,15 @@ function extractTarget(selectionOnly) {
   return { text: documentText, source: "PDF", selected: false };
 }
 
+let hintCard = null;
 function showWordCard(event) {
   const info = assist.wordAt(event.clientX, event.clientY);
   if (!info || !window.getSelection()?.isCollapsed) {
-    card.hidden = true;
+    hintCard?.hide();
     return;
   }
-  const rows = [["surface", info.surface]];
-  if (info.pronunciation) rows.push(["pronunciation", `[${info.pronunciation}]`]);
-  if (info.gloss) rows.push(["gloss", info.gloss]);
-  card.replaceChildren(...rows.map(([className, text]) => {
-    const row = document.createElement("p");
-    row.className = className;
-    row.textContent = text;
-    return row;
-  }));
-  card.hidden = false;
-  const left = Math.min(info.rect.left, window.innerWidth - card.offsetWidth - 12);
-  const below = info.rect.bottom + 8;
-  const top = below + card.offsetHeight > window.innerHeight ? info.rect.top - card.offsetHeight - 8 : below;
-  Object.assign(card.style, { left: `${Math.max(12, left)}px`, top: `${Math.max(TOOLBAR_HEIGHT + 8, top)}px` });
+  hintCard ??= ReadSeedAssist.createHintCard({ topInset: TOOLBAR_HEIGHT });
+  hintCard.show(info);
 }
 
 // The toolbar iframe is same-origin with this page, so it calls this host directly.
@@ -198,15 +186,15 @@ window.ReadSeedHost = {
         else if (history.length > 1) history.back();
         return { ok: true };
       default:
-        card.hidden = true;
+        hintCard?.hide();
         return assist.handleMessage(message, extractTarget);
     }
   },
 };
 
 pagesElement.addEventListener("click", showWordCard);
-window.addEventListener("scroll", () => { card.hidden = true; }, { passive: true });
-document.addEventListener("keydown", (event) => { if (event.key === "Escape") card.hidden = true; });
+window.addEventListener("scroll", () => hintCard?.hide(), { passive: true });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") hintCard?.hide(); });
 for (const input of document.querySelectorAll("#file-input, #notice-file")) {
   input.addEventListener("change", () => openFile(input.files?.[0]).catch((error) => showNotice(error.message)));
 }

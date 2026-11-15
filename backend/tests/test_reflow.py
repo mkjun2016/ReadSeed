@@ -52,3 +52,24 @@ class ReflowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TableReflowTest(unittest.TestCase):
+    def line(self, text, x, y, w=0.08):
+        return {"text": text, "x": x, "y": y, "w": w, "h": 0.015}
+
+    def test_table_cells_stay_separate_and_short_numbers_are_kept(self):
+        lines = [
+            self.line("교과목명", 0.10, 0.14), self.line("유체역학", 0.25, 0.14), self.line("분반", 0.60, 0.14), self.line("101", 0.80, 0.14, 0.03),
+            self.line("개설학과", 0.11, 0.167), self.line("소방공학과", 0.24, 0.167), self.line("학년", 0.60, 0.167), self.line("2", 0.81, 0.167, 0.01),
+        ]
+        blocks = reflow.reflow(lines, aspect=0.77)
+        texts = [" ".join(block["paragraphs"]) for block in blocks]
+        self.assertIn("101", texts)
+        self.assertIn("2", texts)
+        self.assertNotIn("교과목명 개설학과", texts)
+        self.assertEqual(len(blocks), 8)
+
+    def test_page_number_in_margin_is_dropped(self):
+        blocks = reflow.reflow([self.line("본문 글입니다.", 0.1, 0.3, 0.5), self.line("12", 0.5, 0.95, 0.02)])
+        self.assertEqual([block["paragraphs"] for block in blocks], [["본문 글입니다."]])

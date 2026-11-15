@@ -21,6 +21,7 @@ from kiwipiepy import Kiwi
 
 import dict_lookup
 import gloss_selector
+import local_dictionary
 import numerals
 import phonology_rules
 
@@ -63,6 +64,63 @@ def _lookup_gloss(sentence: str, word: str, tag: str) -> list[dict]:
 
     result = _format_gloss(gloss_selector.select(sentence, word, tag, dict_lookup.lookup(word)))
     _gloss_cache[key] = result
+    return result
+
+
+def _known(word: str) -> bool:
+    return bool(local_dictionary.lookup(word, limit=1))
+
+
+def _split_unknown_proper(form: str) -> list[str] | None:
+    """사전에 없는 '고유명사'를 사전 낱말로만 나눠 본다.
+
+    Kiwi는 모르는 합성 명사(점성유동)를 고유명사로 묶는다. 두 글자 이상 사전 명사로
+    빈틈없이 나뉠 때만 나눈다. 사람 이름(이치영)처럼 안 나뉘면 그대로 둔다.
+    """
+    if len(form) < 4 or _known(form) or not re.fullmatch(r"[가-힣]+", form):
+        return None
+    for cut in range(len(form) - 2, 1, -1):
+        head, tail = form[:cut], form[cut:]
+        if not _known(head):
+            continue
+        rest = [tail] if _known(tail) else _split_unknown_proper(tail)
+        if rest:
+            return [head, *rest]
+    return None
+
+
+def _content_lemmas(morphs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """어절 안의 내용어를 사전 표제어 단위로 묶는다.
+
+    합성어는 사전에 있는 가장 긴 묶음을 먼저 쓴다(부정+행위 → 부정행위). 그래야
+    '부정'의 뜻을 '부정행위'의 뜻처럼 보여 주지 않는다.
+    """
+    pieces: list[tuple[str, str]] = []
+    for form, tag in morphs:
+        split = _split_unknown_proper(form) if tag in ("NNP", "NNG") else None
+        pieces.extend((part, "NNG") for part in split) if split else pieces.append((form, tag))
+
+    result: list[tuple[str, str]] = []
+    index = 0
+    while index < len(pieces):
+        form, tag = pieces[index]
+        if tag in _CONTENT_TAGS:
+            run_end = index
+            while run_end < len(pieces) and pieces[run_end][1] in _CONTENT_TAGS:
+                run_end += 1
+            for end in range(run_end, index + 1, -1):
+                joined = "".join(part for part, _ in pieces[index:end])
+                if _known(joined):
+                    result.append((joined, "NNG"))
+                    index = end
+                    break
+            else:
+                result.append((form, tag))
+                index += 1
+            continue
+        if tag in _PREDICATE_TAGS and len(form) >= 2:
+            result.append((form, tag))
+        index += 1
     return result
 
 
@@ -197,12 +255,15 @@ def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = 
             }
         )
         result_index = len(results) - 1
-        for form, tag in morphs:
-            if tag in _CONTENT_TAGS or (tag in _PREDICATE_TAGS and len(form) >= 2):
-                lemma = _lemma_of(form, tag)
-                entries = dict_lookup.lookup(lemma)
-                sentence_gloss_inputs.append((result_index, lemma, tag, entries))
-                log({"단계": "사전 조회", "도구": "기초사전 SQLite → (없으면) 우리말샘 API", "표제어": lemma, "후보": len(entries)})
+        lemmas = _content_lemmas(morphs)
+        if len([1 for _, tag in lemmas if tag in _CONTENT_TAGS]) > 1:
+            # 여러 낱말이 붙은 어절(장애학생지원센터): 뜻은 조각마다라서 카드에 조각 이름을 붙인다.
+            results[result_index]["합성"] = True
+        for form, tag in lemmas:
+            lemma = _lemma_of(form, tag)
+            entries = dict_lookup.lookup(lemma)
+            sentence_gloss_inputs.append((result_index, lemma, tag, entries))
+            log({"단계": "사전 조회", "도구": "기초사전 SQLite → (없으면) 우리말샘 API", "표제어": lemma, "후보": len(entries)})
 
     # LLM은 어절마다 호출하지 않는다. 문장 전체 후보를 한 번에 선택해 비용·지연을
     # 제한하고, 결과만 원래 어절 위치에 돌려놓는다.
@@ -215,7 +276,11 @@ def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = 
     if called:
         log({"단계": "AI 문맥 선택", "도구": "Claude (후보 번호만 고름, 원문 미저장 캐시)", "낱말": len(called)})
     for (result_index, lemma, _, entries), selected in zip(sentence_gloss_inputs, selections):
-        results[result_index]["뜻풀이후보"].extend(_format_gloss(selected))
+        glosses = _format_gloss(selected)
+        if results[result_index].get("합성"):
+            for gloss in glosses:
+                gloss["부분"] = True  # 어절 전체가 아니라 이 조각(표제어)의 뜻
+        results[result_index]["뜻풀이후보"].extend(glosses)
         if selected.reason == "llm_uncertain" and selected.suggestion:
             # 사람 개입: AI가 확신하지 못한 뜻은 띄우지 않고 검토 목록으로 보낸다.
             usable = gloss_selector._usable_candidates(entries)[: gloss_selector.MAX_CANDIDATES_PER_WORD]

@@ -1,6 +1,5 @@
 const API_URL = "http://127.0.0.1:8000/annotate";
 const HEALTH_URL = "http://127.0.0.1:8000/health";
-const KEY_INFO_URL = "http://127.0.0.1:8000/key-info";
 const MAX_SENTENCES = 20;
 const MAX_CONCURRENT_REQUESTS = 2;
 const RENDER_EVERY = 4;
@@ -10,10 +9,8 @@ const EVALUATION_KEY = "readseedEvaluation";
 const DEFAULT_SETTINGS = {
   pronunciation: true,
   gloss: true,
-  keyInfo: true,
   readingGuide: false,
   selectionOnly: false,
-  annotationSize: "medium",
   density: "medium",
   readingSpeed: "normal",
 };
@@ -112,23 +109,6 @@ async function annotateSentence(sentence) {
   } finally { clearTimeout(timeout); }
 }
 
-async function selectKeySentences(sentences) {
-  if (!settings.keyInfo) return [];
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(KEY_INFO_URL, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentences }), signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => null);
-    return response.ok && Array.isArray(payload?.indices) ? payload.indices : [];
-  } catch (_error) {
-    // 핵심 정보 실패가 발음·풀이 분석 전체를 막지 않게 한다.
-    return [];
-  } finally { clearTimeout(timeout); }
-}
-
 // Results are rendered progressively, but only as a contiguous prefix: words are
 // matched to the text in order, so a gap would shift later words onto earlier text.
 async function annotateWithLimit(sentences, onPrefix) {
@@ -168,10 +148,15 @@ function writeSettingsToForm(value) {
   }
 }
 
+// Hints are always folded into underlines and opened by tapping the word.
+function hintSettings() {
+  return { ...settings, reveal: "tap" };
+}
+
 async function saveSettings() {
   settings = readSettingsFromForm();
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-  await sendToHost({ type: "READSEED_UPDATE_SETTINGS", settings }, true);
+  await sendToHost({ type: "READSEED_UPDATE_SETTINGS", settings: hintSettings() }, true);
 }
 
 async function loadSettings() {
@@ -197,12 +182,11 @@ async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
     setStatus(`${sentences.length}개 문장을 분석하고 있습니다…`);
     const results = await annotateWithLimit(sentences, async (partial) => {
       setStatus(`${partial.length}/${sentences.length}개 문장 분석 중…`);
-      await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results: partial, settings: { ...settings, readingGuide: false } }, true);
+      await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results: partial, settings: { ...hintSettings(), readingGuide: false } }, true);
     });
     const succeeded = results.filter((item) => item.ok).length;
     const failed = results.length - succeeded;
-    const keySentenceIndexes = await selectKeySentences(sentences);
-    const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings: { ...settings, keySentenceIndexes } });
+    const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings: hintSettings() });
     if (!overlay?.ok) throw new Error(overlay?.error || "읽기 보조 정보를 표시하지 못했습니다.");
 
     lastAnalysisSummary = {
@@ -212,11 +196,10 @@ async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
       failed,
       pronunciation: overlay.pronunciation,
       gloss: overlay.gloss,
-      keyInfo: overlay.keyInfo,
       selectionOnly,
     };
     const capped = allSentences.length > MAX_SENTENCES ? ` 앞 ${MAX_SENTENCES}문장만 처리했습니다.` : "";
-    setStatus(`발음 ${overlay.pronunciation} · 쉬운 뜻 ${overlay.gloss} · 핵심 정보 ${overlay.keyInfo}${failed ? ` · ${failed}문장 실패` : ""}.${capped}`);
+    setStatus(`읽는 법 ${overlay.pronunciation} · 쉬운 뜻 ${overlay.gloss} — 밑줄 친 낱말을 누르세요${failed ? ` · ${failed}문장 실패` : ""}.${capped}`);
   } finally {
     analyzeButton.disabled = false;
   }

@@ -27,7 +27,7 @@ MIN_CONFIDENCE = float(os.getenv("GLOSS_LLM_MIN_CONFIDENCE", "0.85"))
 CACHE_LIMIT = 2_000
 _selection_cache: dict[str, "Selection"] = {}
 CACHE_DB_PATH = Path(os.getenv("GLOSS_DECISION_CACHE_DB", Path(__file__).resolve().parent / "data" / "gloss_decisions.sqlite3"))
-MAX_WORDS_PER_SENTENCE = int(os.getenv("GLOSS_LLM_MAX_WORDS_PER_SENTENCE", "3"))
+MAX_WORDS_PER_SENTENCE = int(os.getenv("GLOSS_LLM_MAX_WORDS_PER_SENTENCE", "6"))
 MAX_CANDIDATES_PER_WORD = int(os.getenv("GLOSS_LLM_MAX_CANDIDATES_PER_WORD", "4"))
 
 
@@ -155,6 +155,9 @@ def _usable_candidates(candidates: list[dict]) -> list[dict]:
         # 원격 보조 사전은 영화 제목·인명 등 과잉 주석을 일으킬 수 있어 풀이에는 쓰지 않는다.
         if not item.get("_local_id") or item.get("난이도") == "초급":
             continue
+        head = item.get("표제어") or ""
+        if head.startswith("-") or head.endswith("-"):
+            continue  # 접사(-학, 비-)는 낱말의 뜻이 아니다
         definition = item.get("뜻풀이")
         if not definition or definition in seen_definitions:
             continue
@@ -411,6 +414,8 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
     """한 문장의 모든 단어를 최대 한 번의 LLM 요청으로 선택한다."""
     results: list[Optional[Selection]] = [None] * len(items)
     unresolved: list[tuple[int, str, str, list[dict], str]] = []
+    pending: set[str] = set()
+    repeats: list[tuple[int, str]] = []
     for item_index, (word, pos, candidates) in enumerate(items):
         rule_result = select_rule_only(word, pos, candidates)
         if rule_result.reason in {"proper_noun", "beginner_or_nonlocal"}:
@@ -429,7 +434,11 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         cached = _selection_cache.get(key) or _load_persistent(key, usable)
         if cached:
             results[item_index] = cached
+        elif key in pending:
+            # 같은 문장에 같은 낱말이 또 나오면(장애 … 장애학생지원센터) 한 번만 묻는다.
+            repeats.append((item_index, key))
         else:
+            pending.add(key)
             unresolved.append((item_index, word, pos, usable, key))
 
     # UI 밀도도 지키고 비용도 제한한다. 남은 단어는 틀리는 것보다 숨긴다.
@@ -457,4 +466,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         if answer is not None:
             _store_selection(key, selection)
         results[item_index] = selection
+    decided = {key: results[index] for index, _, _, _, key in unresolved}
+    for item_index, key in repeats:
+        results[item_index] = decided.get(key)
     return [result if result is not None else Selection(None, "llm_uncertain") for result in results]

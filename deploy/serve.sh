@@ -24,5 +24,5 @@ TUNNEL=$!
 trap 'kill $SERVER $TUNNEL 2>/dev/null; wait' INT TERM EXIT
 
 for _ in $(seq 1 60); do curl -fs "http://127.0.0.1:$PORT/health" >/dev/null && break; sleep 1; done
-echo "ReadSeed 켜짐: https://$HOST/app/  (하루 AI 상한 $AI_DAILY_LIMIT회, 주소당 1분 $RATE_LIMIT_PER_MINUTE회)"
+echo "ReadSeed 켜짐: https://$HOST/app/  (하루 AI 상한 ${AI_DAILY_LIMIT}회, 주소당 1분 ${RATE_LIMIT_PER_MINUTE}회)"
 wait

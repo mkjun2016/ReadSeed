@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const { create, normalizeText, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
+  const { create, createHintCard, normalizeText, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
   // Tiers are tried in order: dedicated article-body containers first, then broad
   // page regions that may also hold the headline, byline and related links.
   const CONTENT_SELECTOR_TIERS = [
@@ -18,6 +18,29 @@
 
   const assist = create();
   const toolbar = { frame: null };
+  let card = null;
+
+  // Hints stay folded into dotted underlines; tapping an underlined word opens a
+  // card with how to read it and its meaning, instead of labels between the lines.
+  function onPageClick(event) {
+    if (!toolbar.frame) return;
+    if (card?.contains(event.target)) return;
+    const selection = window.getSelection();
+    const info = selection && !selection.isCollapsed ? null : assist.wordAt(event.clientX, event.clientY);
+    if (!info) {
+      card?.hide();
+      return;
+    }
+    // The word may sit inside a link: open the hint instead of following it.
+    event.preventDefault();
+    event.stopPropagation();
+    card ??= createHintCard({ topInset: TOOLBAR_HEIGHT });
+    card.show(info);
+  }
+
+  function hideCard() {
+    card?.hide();
+  }
 
   function textFrom(element) {
     if (!element.querySelector(EXCLUDED_SELECTORS)) return normalizeText(element.innerText || "");
@@ -98,13 +121,25 @@
     document.documentElement.append(frame);
     document.documentElement.classList.add(TOOLBAR_OPEN_CLASS);
     toolbar.frame = frame;
+    document.addEventListener("click", onPageClick, true);
+    window.addEventListener("scroll", hideCard, { passive: true });
+    document.addEventListener("keydown", onKeydown, true);
     assist.scheduleOverlayPositionUpdate();
   }
 
   // Closing turns ReadSeed off entirely: annotations, highlights, reading guide and
   // the temporary spacing classes all go, leaving the page as it was before.
+  function onKeydown(event) {
+    if (event.key === "Escape") hideCard();
+  }
+
   function closeToolbar() {
     assist.clearOverlay();
+    card?.remove();
+    card = null;
+    document.removeEventListener("click", onPageClick, true);
+    window.removeEventListener("scroll", hideCard);
+    document.removeEventListener("keydown", onKeydown, true);
     toolbar.frame?.remove();
     toolbar.frame = null;
     const root = document.documentElement;
@@ -128,6 +163,7 @@
         sendResponse({ ok: true });
         return;
       default: {
+        hideCard();
         const response = assist.handleMessage(message, extractTarget);
         if (response !== undefined) sendResponse(response);
       }
