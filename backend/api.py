@@ -15,7 +15,7 @@ import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -211,7 +211,37 @@ def reflow_page(request: ReflowRequest) -> dict[str, list[dict[str, Any]]]:
 # The tablet web app is served from this same server, so a tablet only needs one
 # address and its API calls are same-origin. It reuses the extension's overlay
 # renderer and PDF.js build from frontend/ instead of keeping copies.
+# Cloudflare gives JS·CSS a 4-hour browser cache whatever this server says, so a
+# browser could pair a new page with an old app.js. The page and app.js are served
+# with every file they load tagged by a version taken from the files' modification
+# times: any edit changes the address, and the browser fetches the new file.
+_VERSIONED_FILES = ("webapp/app.js", "webapp/app.css", "webapp/samples.js", "frontend/assist.js", "frontend/overlay.css")
+
+
+def _asset_version() -> str:
+    stamps = [int((ROOT / name).stat().st_mtime) for name in _VERSIONED_FILES if (ROOT / name).exists()]
+    return format(max(stamps, default=0), "x")
+
+
+def _versioned(path: Path, references: tuple[str, ...]) -> Response:
+    text = path.read_text(encoding="utf-8")
+    version = _asset_version()
+    for reference in references:
+        text = text.replace(f'"{reference}"', f'"{reference}?v={version}"')
+    media = "text/html" if path.suffix == ".html" else "text/javascript"
+    return Response(text, media_type=f"{media}; charset=utf-8", headers={"Cache-Control": "no-cache"})
+
+
 if (ROOT / "webapp").is_dir():
+    @app.get("/app/", include_in_schema=False)
+    @app.get("/app/index.html", include_in_schema=False)
+    def webapp_page() -> Response:
+        return _versioned(ROOT / "webapp" / "index.html", ("app.css", "app.js", "/shared/assist.js", "/shared/overlay.css"))
+
+    @app.get("/app/app.js", include_in_schema=False)
+    def webapp_script() -> Response:
+        return _versioned(ROOT / "webapp" / "app.js", ("./samples.js", "./promise-polyfill.mjs"))
+
     app.mount("/app", StaticFiles(directory=ROOT / "webapp", html=True), name="webapp")
     app.mount("/shared", StaticFiles(directory=ROOT / "frontend"), name="shared")
 
