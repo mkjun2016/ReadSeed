@@ -16,3 +16,6 @@ backend/labeling/
 # 공개 배포: setup-tunnel.sh가 만드는 이 맥 전용 설정
 deploy/cloudflared.yml
 deploy/.public-host
+
+# 홈 책장 예시 책 PDF(용량이 크고 각 기관이 펴낸 자료라 저장소에 넣지 않음)
+webapp/books/*.pdf

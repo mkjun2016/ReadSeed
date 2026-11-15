@@ -71,12 +71,20 @@
         <button id="notebook-open" class="primary-button" type="button">공책 열기</button>
       </section>
 
-      <section class="home-section" aria-labelledby="samples-title">
+      <section class="home-section library" aria-labelledby="samples-title">
         <div class="section-head">
-          <h2 id="samples-title">연습 글로 시작하기</h2>
-          <p>소리와 글자가 다른 낱말이 많이 들어 있어요.</p>
+          <h2 id="samples-title">책장에서 골라 읽기</h2>
+          <p>표지를 누르면 바로 펼쳐져요.</p>
         </div>
-        <div id="sample-list" class="sample-list"></div>
+        <div class="hero-wrap">
+          <div id="book-hero" class="hero" aria-roledescription="추천 책 넘기기"></div>
+          <div id="hero-dots" class="hero-dots" aria-hidden="true"></div>
+        </div>
+        <h3 class="shelf-title">선생님이 고른 읽기 책</h3>
+        <div id="book-shelf" class="shelf" role="list"></div>
+        <h3 class="shelf-title">짧은 글로 먼저 연습해요 <span>소리와 글자가 다른 낱말이 많아요</span></h3>
+        <div id="sample-list" class="shelf" role="list"></div>
+        <p id="book-status" class="book-status" role="status"></p>
       </section>
 
       <section class="home-section" aria-labelledby="own-title">

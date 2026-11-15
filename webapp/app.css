@@ -228,26 +228,115 @@ body[data-view="home"] #home-button { display: none; }
 .section-head h2 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
 .section-head p { margin: 0; color: var(--ink-soft); font-size: 15px; }
 
-.sample-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-.sample {
+/* ---------- Book shelf (home) ----------
+   A featured-book banner that swipes sideways, then shelves of covers that scroll
+   sideways, like a reading app's library. Every cover is one big tap target. */
+.hero-wrap { position: relative; }
+.hero {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border-radius: 22px;
+  overscroll-behavior-x: contain;
+}
+.hero::-webkit-scrollbar, .shelf::-webkit-scrollbar { display: none; }
+.hero-slide {
   position: relative;
   display: grid;
-  align-content: start;
-  gap: 6px;
-  min-height: 150px;
-  padding: 20px 20px 18px;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 236px;
+  padding: 28px 32px;
   border: 0;
-  border-radius: 20px;
-  background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line), var(--shadow-1);
+  background: var(--tone-bg);
+  color: var(--ink);
   text-align: left;
+  scroll-snap-align: start;
+  overflow: hidden;
+}
+.hero-slide .eyebrow { display: block; margin-bottom: 10px; color: var(--tone-ink); font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+.hero-slide .headline { display: block; font-size: clamp(28px, 4.4vw, 40px); font-weight: 400; line-height: 1.22; letter-spacing: -0.03em; color: var(--tone-ink); }
+.hero-slide .headline b { display: block; font-weight: 800; color: var(--ink); }
+.hero-slide .meta { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; padding: 6px 14px; border-radius: 999px; background: oklch(1 0 0 / 0.75); color: var(--ink-soft); font-size: 14px; font-weight: 700; }
+.hero-covers { position: relative; width: 210px; height: 190px; }
+.hero-covers img {
+  position: absolute;
+  bottom: 0;
+  width: 128px;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 10px 24px oklch(0 0 0 / 0.22), 0 0 0 1px oklch(0 0 0 / 0.06);
+}
+.hero-covers img:nth-child(1) { right: 0; z-index: 3; width: 138px; }
+.hero-covers img:nth-child(2) { right: 82px; z-index: 2; transform: rotate(-7deg) scale(0.86); transform-origin: bottom right; opacity: 0.95; }
+.hero-covers img:nth-child(3) { right: 150px; z-index: 1; transform: rotate(-12deg) scale(0.72); transform-origin: bottom right; opacity: 0.85; }
+.hero-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+.hero-dots span { width: 6px; height: 6px; border-radius: 999px; background: var(--line-strong); transition: width 150ms var(--ease), background 150ms var(--ease); }
+.hero-dots span.on { width: 18px; background: var(--ink-soft); }
+
+[data-tone="sky"] { --tone-bg: oklch(0.95 0.035 220); --tone-ink: oklch(0.45 0.09 230); }
+[data-tone="sun"] { --tone-bg: oklch(0.95 0.06 90); --tone-ink: oklch(0.47 0.09 70); }
+[data-tone="leaf"] { --tone-bg: oklch(0.95 0.04 150); --tone-ink: oklch(0.42 0.09 155); }
+[data-tone="rose"] { --tone-bg: oklch(0.94 0.04 15); --tone-ink: oklch(0.46 0.11 20); }
+[data-tone="lilac"] { --tone-bg: oklch(0.94 0.035 290); --tone-ink: oklch(0.45 0.12 285); }
+
+.shelf-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 30px 0 12px; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+.shelf-title span { color: var(--ink-soft); font-size: 14px; font-weight: 600; }
+.shelf {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 148px;
+  gap: 18px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 4px var(--gutter) 10px;
+  scroll-padding-inline: var(--gutter);
+}
+.book {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  scroll-snap-align: start;
+}
+.book .cover {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--fill);
+  box-shadow: 0 6px 16px oklch(0 0 0 / 0.14), 0 0 0 1px oklch(0 0 0 / 0.06);
   transition: transform 150ms var(--ease);
 }
-.sample:active { transform: scale(0.985); background: var(--fill); }
-.sample .kind { justify-self: start; padding: 2px 10px; border-radius: 999px; background: var(--brand-tint); color: var(--brand-strong); font-size: 14px; font-weight: 700; }
-.sample .title { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
-.sample .preview { color: var(--ink-soft); font-size: 16px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.sample .go { justify-self: end; margin-top: 2px; color: var(--brand-strong); font-size: 15px; font-weight: 800; }
+.book .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.book .cover::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 6px; background: linear-gradient(90deg, oklch(0 0 0 / 0.14), transparent); }
+.book:active .cover { transform: scale(0.97); }
+.book .badge { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 2px 8px; border-radius: 999px; background: oklch(0.82 0.15 85); color: oklch(0.3 0.06 70); font-size: 12px; font-weight: 800; }
+.book .name { font-size: 16px; font-weight: 800; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book .by { color: var(--ink-soft); font-size: 13.5px; }
+.book[aria-busy="true"] .cover { opacity: 0.6; }
+.book[aria-busy="true"] .cover::before { content: "여는 중…"; position: absolute; inset: auto 0 0; z-index: 2; padding: 6px; background: oklch(0 0 0 / 0.6); color: white; font-size: 13px; font-weight: 700; text-align: center; }
+/* A short practice text has no printed cover, so it gets a drawn one. */
+.text-cover { display: grid; align-content: space-between; height: 100%; padding: 14px 12px; background: var(--tone-bg); }
+.text-cover .kind { justify-self: start; padding: 1px 8px; border-radius: 999px; background: oklch(1 0 0 / 0.7); color: var(--tone-ink); font-size: 12px; font-weight: 800; }
+.text-cover .big { color: var(--tone-ink); font-size: 21px; font-weight: 800; line-height: 1.25; letter-spacing: -0.02em; }
+.text-cover .mark { justify-self: end; width: 28px; height: 28px; color: var(--tone-ink); opacity: 0.6; }
+.book-status { margin: 8px 0 0; color: var(--danger); font-size: 15px; }
+.book-status:empty { display: none; }
 
 .two-up { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
 .tile {
@@ -784,9 +873,17 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
   .how { grid-template-columns: repeat(2, 1fr); }
   .grown-grid { grid-template-columns: 1fr; }
   .grown-card { min-height: 0; }
+  .hero-slide { padding: 24px; }
+  .hero-covers { width: 150px; height: 160px; }
+  .hero-covers img { width: 104px; }
+  .hero-covers img:nth-child(1) { width: 112px; }
+  .hero-covers img:nth-child(3) { display: none; }
 }
 @media (max-width: 640px) {
   .welcome h1 { font-size: 30px; }
+  .hero-slide { grid-template-columns: 1fr; min-height: 0; }
+  .hero-covers { display: none; }
+  .shelf { grid-auto-columns: 124px; gap: 14px; }
   .guide-steps li { grid-template-columns: 40px 1fr; row-gap: 10px; }
   .guide-art { grid-column: 2; }
   .set-row { grid-template-columns: 1fr; }

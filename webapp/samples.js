@@ -20,3 +20,42 @@ export const SAMPLES = [
 우리 고장에 남아 있는 문화유산을 찾아보고, 소중히 지켜야 하는 까닭을 이야기해 봅시다.`,
   },
 ];
+
+// Example books on the home shelf. The PDFs and covers live in webapp/books/;
+// the PDFs are not committed (large, published by their own agencies), so a fresh
+// checkout shows the shelf with a notice instead of opening them.
+export const BOOKS = [
+  {
+    id: "think",
+    title: "생각이 자라는 시간",
+    by: "전북특별자치도교육청",
+    tag: "아침 10분 독서",
+    note: "초등 3·4학년 · 48쪽",
+    file: "books/think.pdf",
+    cover: "books/think-cover.jpg",
+    hero: ["아침 10분,", "생각이 자라는 시간"],
+    tone: "sky",
+  },
+  {
+    id: "almaeng",
+    title: "알맹이 읽기 기본 1",
+    by: "인천광역시교육청",
+    tag: "교과서 속 읽기",
+    note: "중요한 내용을 쉽게 · 93쪽",
+    file: "books/almaeng.pdf",
+    cover: "books/almaeng-cover.jpg",
+    hero: ["교과서 속", "알맹이만 쏙쏙"],
+    tone: "sun",
+  },
+  {
+    id: "doran",
+    title: "도란도란 2025 가을호",
+    by: "부산시 어린이신문",
+    tag: "어린이신문",
+    note: "우리 동네 소식 · 8쪽",
+    file: "books/doran.pdf",
+    cover: "books/doran-cover.jpg",
+    hero: ["가을의 부산,", "어린이 기자가 전해요"],
+    tone: "leaf",
+  },
+];

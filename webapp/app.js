@@ -2,7 +2,7 @@
 // so hints never wrap or replace the text: they sit in a separate layer, and by
 // default each one stays folded into a dotted underline until its word is tapped.
 import "./promise-polyfill.mjs";
-import { SAMPLES } from "./samples.js";
+import { BOOKS, SAMPLES } from "./samples.js";
 
 const { create, EXCLUDED_SELECTORS } = globalThis.ReadSeedAssist;
 
@@ -1177,13 +1177,6 @@ function button(label, className, onClick) {
   return element;
 }
 
-function element(tag, className, ...children) {
-  const node = document.createElement(tag);
-  node.className = className;
-  node.append(...children);
-  return node;
-}
-
 // ---------- Word study ----------
 // One card per word the child needed a hint for: the child reads the word aloud
 // alone first, then opens the answer and says whether they read it right. The app
@@ -1514,24 +1507,91 @@ function reportError(error) {
   setStatus("문제가 생겼어요. 다시 시도해 주세요.");
 }
 
-function renderSamples() {
-  $("#sample-list").replaceChildren(...SAMPLES.map((sample) => {
-    const button = document.createElement("button");
+function element(tag, className, ...children) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.append(...children.filter((child) => child !== null && child !== undefined));
+  return node;
+}
+
+function coverImage(book) {
+  const image = element("img");
+  image.src = book.cover;
+  image.alt = "";
+  image.loading = "lazy";
+  image.decoding = "async";
+  return image;
+}
+
+// A shelf book is a PDF on this server, opened just like one the reader picked.
+async function openBook(book, button) {
+  const status = $("#book-status");
+  status.textContent = "";
+  button?.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(book.file);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    await openPdf(new File([blob], `${book.title}.pdf`, { type: "application/pdf" }));
+  } catch (error) {
+    console.error("[ReadSeed]", error);
+    status.textContent = `‘${book.title}’을 열지 못했어요. 책 파일이 이 서버에 있는지 확인해 주세요.`;
+  } finally {
+    button?.removeAttribute("aria-busy");
+  }
+}
+
+function renderHero() {
+  const hero = $("#book-hero");
+  const slides = BOOKS.map((book, index) => {
+    const others = [book, ...BOOKS.filter((other) => other !== book)];
+    const slide = element("button", "hero-slide",
+      element("span", "",
+        element("span", "eyebrow", `선생님 추천 · ${book.tag}`),
+        element("span", "headline", book.hero[0], element("b", "", book.hero[1])),
+        element("span", "meta", `${book.by} · ${book.note}`)),
+      element("span", "hero-covers", ...others.map(coverImage)));
+    slide.type = "button";
+    slide.dataset.tone = book.tone;
+    slide.setAttribute("aria-label", `${book.title} 읽기 (${index + 1}/${BOOKS.length})`);
+    slide.addEventListener("click", () => openBook(book, null));
+    return slide;
+  });
+  hero.replaceChildren(...slides);
+  const dots = BOOKS.map(() => element("span"));
+  $("#hero-dots").replaceChildren(...dots);
+  const mark = () => {
+    const index = Math.round(hero.scrollLeft / Math.max(1, hero.clientWidth));
+    dots.forEach((dot, i) => dot.classList.toggle("on", i === index));
+  };
+  hero.addEventListener("scroll", mark, { passive: true });
+  mark();
+}
+
+function renderShelf() {
+  $("#book-shelf").replaceChildren(...BOOKS.map((book, index) => {
+    const button = element("button", "book",
+      element("span", "cover", index === 0 ? element("span", "badge", "추천") : null, coverImage(book)),
+      element("span", "name", book.title),
+      element("span", "by", book.by));
     button.type = "button";
-    button.className = "sample";
-    const kind = document.createElement("span");
-    kind.className = "kind";
-    kind.textContent = sample.kind;
-    const title = document.createElement("span");
-    title.className = "title";
-    title.textContent = sample.title;
-    const preview = document.createElement("span");
-    preview.className = "preview";
-    preview.textContent = sample.text;
-    const go = document.createElement("span");
-    go.className = "go";
-    go.textContent = "읽기 →";
-    button.append(kind, title, preview, go);
+    button.setAttribute("role", "listitem");
+    button.addEventListener("click", () => openBook(book, button));
+    return button;
+  }));
+}
+
+function renderSamples() {
+  const tones = ["rose", "lilac", "sky", "sun"];
+  const mark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C6.5 4 9.5 4 12 6c2.5-2 5.5-2 8-.5V19c-2.5-1.5-5.5-1.5-8 .5-2.5-2-5.5-2-8-.5z" /><path d="M12 6v13.5" /></svg>';
+  $("#sample-list").replaceChildren(...SAMPLES.map((sample, index) => {
+    const icon = element("span", "mark");
+    icon.innerHTML = mark;
+    const cover = element("span", "cover", element("span", "text-cover", element("span", "kind", sample.kind), element("span", "big", sample.title), icon));
+    cover.firstChild.dataset.tone = tones[index % tones.length];
+    const button = element("button", "book", cover, element("span", "name", sample.title), element("span", "by", `ReadSeed 연습 글 · ${sample.kind}`));
+    button.type = "button";
+    button.setAttribute("role", "listitem");
     button.addEventListener("click", () => openText(sample));
     return button;
   }));
@@ -1842,6 +1902,8 @@ window.addEventListener("resize", () => {
   }
 });
 
+renderHero();
+renderShelf();
 renderSamples();
 updateNotebookTile();
 // Home demo: the same two taps as in a real text (sound, then meaning), all local.
