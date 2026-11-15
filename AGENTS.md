@@ -193,6 +193,6 @@ cp .env.example .env
 
 ### P3 — 운영
 
-- [x] 웹앱 공개 배포: 무료로 이 맥 + Cloudflare Tunnel(`deploy/setup-tunnel.sh`, `deploy/serve.sh`). 공개 모드에서 출처 제한·주소별 1분 요청 제한·하루 AI 상한 100회(넘으면 규칙만)·API 문서 숨김. 주소 https://readseed.online/app/ . 맥이 켜져 있을 때만 접속된다 (2026-11-13)
+- [x] 웹앱 공개 배포: 무료로 이 맥 + Cloudflare Tunnel(`deploy/setup-tunnel.sh`, `deploy/serve.sh`). 공개 모드에서 출처 제한·주소별 1분 요청 제한·하루 AI 상한 500회(넘으면 규칙만)·API 문서 숨김. 주소 https://readseed.online/app/ . 맥이 켜져 있을 때만 접속된다 (2026-11-13)
 - [ ] 상시 접속이 필요해지면 클라우드 서버로 옮긴다(리눅스는 OCR을 CLOVA OCR 등으로 교체).
 - [ ] API 키 설정·사전 API 장애 모니터링·사용자용 문제 해결 문서를 보강한다.

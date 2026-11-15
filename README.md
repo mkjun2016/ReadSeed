@@ -113,7 +113,7 @@ curl http://127.0.0.1:8000/health
 | `PUBLIC_MODE=1` | 켬 | API 문서(`/docs`) 숨김 |
 | `ALLOWED_ORIGINS` | `https://<공개 주소>` | 브라우저에서는 이 주소의 웹앱만 API를 부를 수 있다 |
 | `RATE_LIMIT_PER_MINUTE` | 240 | 방문자 주소(Cloudflare가 넘겨준 IP)마다 1분 분석 요청 수. 넘으면 429와 "1분 뒤에 다시" 안내 |
-| `AI_DAILY_LIMIT` | 100 | 하루 Claude 호출 수. 다 쓰면 그날은 규칙만으로 힌트를 만든다(차단기는 열지 않음) |
+| `AI_DAILY_LIMIT` | 500 | 하루 Claude 호출 수. 다 쓰면 그날은 규칙만으로 힌트를 만든다(차단기는 열지 않음) |
 
 스캔 이미지는 15MB까지 받는다. 서버 접속 기록에는 경로만 남고 보낸 글은 남지 않는다. 로컬 개발(`uvicorn api:app`)에서는 이 제한이 모두 꺼져 있다. 처음 화면 아래에 한국어기초사전(CC BY-SA 2.0 KR) 출처를 표시한다.
 
