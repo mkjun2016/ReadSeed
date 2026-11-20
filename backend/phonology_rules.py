@@ -287,6 +287,31 @@ def _from_lexicon(word: str, g2p: G2p) -> dict | None:
     }
 
 
+def _palatalize_hyeo(word: str, pronounced: str) -> str:
+    """받침 ㄷ·ㅌ 뒤 ‘혀·여’의 구개음화를 표준 발음으로 바로잡는다 (제17항 붙임, 제5항 다만 1).
+
+    - g2pkk는 ‘히’만 [치]로 바꾸고 줄어든 ‘혀’는 [텨]로 남긴다: 닫혀요 → [다처요], 묻혀서 → [무처서].
+    - 구개음화로 생긴 [쳐]·[져]는 활용형이라 [처]·[저]로 읽는다: 붙였다 → [부첟따].
+      표기부터 져·쳐인 낱말(가져)은 g2pkk가 이미 처리하므로 ‘여·혀’에서 온 것만 고친다.
+    """
+    if len(word) != len(pronounced):
+        return pronounced
+    D, T = "\u11ae", "\u11c0"  # 받침 ㄷ, ㅌ
+    H, O, YEO, EO = "\u1112", "\u110b", "\u1167", "\u1165"  # 초성 ㅎ, ㅇ, 중성 ㅕ, ㅓ
+    TH, CH, J = "\u1110", "\u110e", "\u110c"  # 초성 ㅌ, ㅊ, ㅈ
+    said = list(pronounced)
+    for index in range(len(word) - 1):
+        spelled, following = h2j(word[index]), h2j(word[index + 1])
+        heard = h2j(said[index + 1])
+        if len(spelled) != 3 or spelled[2] not in (D, T) or following[1:2] != YEO or heard[1:2] != YEO:
+            continue
+        if following[0] == H and heard[0] == TH and spelled[2] == D:
+            said[index + 1] = compose(CH + EO + heard[2:])
+        elif following[0] in (H, O) and heard[0] in (CH, J):
+            said[index + 1] = compose(heard[0] + EO + heard[2:])
+    return "".join(said)
+
+
 def classify(word: str, g2p: G2p, use_lexicon: bool = True) -> dict:
     """표제어(어절)를 형태소 경계 기준으로 분석해 발음과 음운변동 유형을 반환.
 
@@ -331,6 +356,10 @@ def classify(word: str, g2p: G2p, use_lexicon: bool = True) -> dict:
     real_pron = g2p(word)
     traced_pron, fired = _trace(word, g2p)
     reliable = traced_pron == real_pron
+    fixed = _palatalize_hyeo(word, real_pron)
+    if fixed != real_pron and reliable:
+        real_pron = fixed
+        fired = [*fired, "17"]
 
     relinked = _relink(word, real_pron)
     if relinked:

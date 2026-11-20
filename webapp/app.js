@@ -1269,15 +1269,18 @@ let dailyRequest = null;
 function fetchDaily(plan) {
   const key = `${plan.date}:${plan.rule}`;
   if (dailyRequest?.key !== key) {
-    const promise = fetch("/daily", {
+    const ask = () => fetch("/daily", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rule: plan.rule, date: plan.date }),
     }).then(async (response) => {
       const passage = await response.json().catch(() => null);
-      if (!response.ok || !passage?.text) throw new Error(passage?.detail || `요청 실패 (${response.status})`);
+      if (!response.ok || !passage?.text) throw Object.assign(new Error(passage?.detail || `요청 실패 (${response.status})`), { status: response.status });
       return passage;
     });
+    // A long rewrite can outlast the tunnel's 100 s limit (524). The server keeps going
+    // and saves the passage, so asking once more picks it up.
+    const promise = ask().catch((error) => (error.status >= 500 || !error.status ? ask() : Promise.reject(error)));
     promise.catch(() => { if (dailyRequest?.promise === promise) dailyRequest = null; });
     dailyRequest = { key, promise };
   }

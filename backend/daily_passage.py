@@ -33,6 +33,11 @@ MAX_ATTEMPTS = 3
 MIN_TARGETS = 5
 MIN_SENTENCES, MAX_SENTENCES = 4, 9
 MAX_CHARS = 420
+# 해독 가능 텍스트(decodable text)처럼, 오늘 연습할 변동 말고 다른 변동은 거의 넣지 않는다.
+# 연음은 모든 변동의 바탕이라 섞여도 되고(받침이 넘어가는 것), 받침 대표음·모음 변이도
+# 따로 연습하는 변동이 아니라 허용한다. 그 밖의 변동 낱말은 글 전체에서 이만큼까지만.
+MAX_OTHER = 2
+ALLOWED_OTHER = {"연음", "받침대표음화", "모음변화", "동일", "미확인"}
 
 # 소리마다 아이에게 보여 줄 설명과, 글을 쓸 때 참고할 낱말.
 RULES: dict[str, dict] = {
@@ -74,7 +79,7 @@ BASIC: dict[str, dict] = {
     },
     "구개음화": {
         "title": "새해 해돋이",
-        "text": "새해 첫날 우리 가족은 같이 바다에 갔어요. 맏이인 언니가 해돋이를 꼭 보자고 했어요. 바닷가 끝에 서서 해를 기다렸어요. 동생은 굳이 모래밭이 좋다며 뛰어다녔어요. 해가 솟자 문이 닫힌 가게 앞도 환해졌어요. 우리는 사진을 벽에 붙이자고 약속했어요.",
+        "text": "우리 가족은 새해 아침에 같이 바다로 갔어요. 맏이인 언니가 해돋이를 보자고 했어요. 바다 끝이 붉어졌어요. 동생은 굳이 모래 위를 뛰어다녔어요. 해가 뜨자 가게 문이 닫혔어요. 우리는 사진을 벽에 붙이기로 했어요.",
     },
     "경음화": {
         "title": "학교 앞 식당",
@@ -82,7 +87,7 @@ BASIC: dict[str, dict] = {
     },
     "비음화": {
         "title": "할머니의 국물",
-        "text": "할머니는 맛있는 국물을 끓여 주셨어요. 나는 밥을 먹는 동안 이야기를 들었어요. 앞마당에는 꽃이 많이 피었어요. 동생은 숟가락만 들고 웃었어요. 할머니가 고맙다고 말씀하셨어요. 오늘은 정말 행복한 날입니다.",
+        "text": "할머니는 맛있는 국물을 주셨어요. 나는 밥을 먹는 동안 이야기를 들었어요. 앞마당에는 꽃이 가득 피었어요. 동생은 숟가락만 들고 웃었어요. 할머니가 다 먹은 그릇을 보시며 웃으셨어요. 오늘은 정말 즐거운 날입니다.",
     },
     "유음화": {
         "title": "설날 아침",
@@ -107,7 +112,14 @@ def split_sentences(text: str) -> list[str]:
 
 def find_targets(text: str, rule: str) -> tuple[list[dict], int]:
     """규칙·사전 파이프라인으로 그 소리가 실제로 일어나는 낱말만 고른다. (낱말들, 문장 수)"""
+    targets, _, count = analyze(text, rule)
+    return targets, count
+
+
+def analyze(text: str, rule: str) -> tuple[list[dict], list[dict], int]:
+    """(목표 변동 낱말, 섞여 든 다른 변동 낱말, 문장 수). 발음·유형은 규칙·사전이 정한다."""
     targets: list[dict] = []
+    others: list[dict] = []
     seen: set[str] = set()
     sentences = split_sentences(text)
     for sentence in sentences:
@@ -117,6 +129,8 @@ def find_targets(text: str, rule: str) -> tuple[list[dict], int]:
             # 대표 유형이 아니어도 표기와 (규칙·사전이 정한) 소리를 비교해 그 변동이 있으면 센다.
             # 사전 발음 낱말(솜이불[솜니불])은 대표 유형이 '어휘적예외'로 붙기 때문이다.
             if word.get("유형") != rule and rule not in phonology_rules._diff_categories(word["표기"], word["발음"]):
+                if word.get("유형") not in ALLOWED_OTHER and rule != word.get("유형"):
+                    others.append({"표기": word["표기"], "발음": word["발음"], "유형": word.get("유형")})
                 continue
             morphs = word.get("형태소") or []
             # 연음은 거의 모든 ‘-었어요’에 일어나서(갔어요[가써요]) 세면 글 전체가 정답이 된다.
@@ -129,7 +143,7 @@ def find_targets(text: str, rule: str) -> tuple[list[dict], int]:
                 continue
             seen.add(stem)
             targets.append({"표기": word["표기"], "발음": word["발음"]})
-    return targets, len(sentences)
+    return targets, others, len(sentences)
 
 
 def _josa(word: str) -> str:
@@ -138,15 +152,18 @@ def _josa(word: str) -> str:
 
 
 def check(text: str, rule: str) -> dict:
-    targets, sentences = find_targets(text, rule)
+    targets, others, sentences = analyze(text, rule)
     problems = []
+    if len(others) > MAX_OTHER:
+        listed = ", ".join(f"{o['표기']}[{o['발음']}]({o['유형']})" for o in others)
+        problems.append(f"{rule} 말고 다른 소리 변동 낱말이 {len(others)}개 섞였어요: {listed}. {MAX_OTHER}개 이하로 다른 낱말로 바꿔 주세요")
     if len(targets) < MIN_TARGETS:
         problems.append(f"{_josa(rule)} 일어나는 낱말이 {len(targets)}개뿐이에요. {MIN_TARGETS}개 이상 필요해요")
     if not MIN_SENTENCES <= sentences <= MAX_SENTENCES:
         problems.append(f"문장이 {sentences}개예요. {MIN_SENTENCES}~{MAX_SENTENCES}문장으로 써야 해요")
     if len(text) > MAX_CHARS:
         problems.append(f"글이 {len(text)}자예요. {MAX_CHARS}자 안으로 줄여야 해요")
-    return {"ok": not problems, "targets": targets, "problems": problems}
+    return {"ok": not problems, "targets": targets, "others": others, "problems": problems}
 
 
 def _ask_claude(messages: list[dict]) -> Optional[dict]:
@@ -163,14 +180,14 @@ def _ask_claude(messages: list[dict]) -> Optional[dict]:
         ),
         "messages": messages,
     }
-    body = gloss_selector._post_with_retry("https://api.anthropic.com/v1/messages", headers, payload, timeout=60)
+    body = gloss_selector._post_with_retry("https://api.anthropic.com/v1/messages", headers, payload, timeout=120)
     if not body:
         return None
     try:
         content = next(block["text"] for block in body["content"] if block.get("type") == "text").strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0]
-        answer = json.loads(content)
+        # 앞뒤에 설명·코드 울타리가 붙어도 JSON 덩어리만 꺼낸다.
+        start, end = content.find("{"), content.rfind("}")
+        answer = json.loads(content[start:end + 1] if 0 <= start < end else content)
         if isinstance(answer.get("title"), str) and isinstance(answer.get("text"), str):
             return {"title": answer["title"].strip()[:30], "text": " ".join(answer["text"].split())}
     except (StopIteration, KeyError, TypeError, ValueError):
@@ -189,6 +206,8 @@ def _first_prompt(rule: str) -> str:
             "이야기에 처음·가운데·끝이 있게 쓰세요. 대화문 따옴표는 쓰지 마세요.",
             "낱말을 억지로 끼워 넣지 마세요. 모든 문장의 뜻이 자연스럽고 맞아야 해요(낱말 뜻을 틀리게 쓰면 안 돼요).",
             "같은 낱말을 되풀이하지 말고 서로 다른 낱말을 쓰세요.",
+            f"해독 가능 텍스트처럼 써 주세요: {rule} 말고 다른 소리 변동(된소리되기 학교[학꾜], 거센소리 좋다[조타], 콧소리 국물[궁물], ㄹ소리 신라[실라], ㄴ첨가 등)이 일어나는 낱말은 글 전체에서 {MAX_OTHER}개 이하로만 쓰세요. 받침이 뒤로 넘어가는 소리(책을[채글])는 괜찮아요.",
+            "받침 없는 글자와 소리 나는 대로 읽히는 낱말을 많이 쓰고, 겹받침(닭, 앉다, 읽다)은 되도록 피하세요.",
             "발음 표시([ ])나 설명은 글에 넣지 마세요. 글자 그대로의 맞춤법으로만 쓰세요.",
             "참고 낱말은 기본형 그대로 쓰지 말고 문장에 맞게 바꿔 쓰세요(붙이다 → 붙였어요, 닫히다 → 닫혔어요). 맞춤법·문법이 틀린 문장은 절대 안 돼요.",
         ],

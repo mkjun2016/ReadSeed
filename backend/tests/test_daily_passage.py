@@ -18,6 +18,14 @@ class DailyPassageTest(unittest.TestCase):
                 verdict = daily_passage.check(passage["text"], rule)
                 self.assertTrue(verdict["ok"], verdict["problems"])
 
+    def test_other_sound_changes_are_limited_like_a_decodable_text(self):
+        # 구개음화 연습 글에 된소리·거센소리 낱말이 잔뜩 섞이면 다시 쓰게 한다.
+        mixed = "우리는 같이 학교에 갔다. 굳이 국밥을 먹었다. 해돋이를 보니 좋다고 했다. 식당 밭이 넓었다. 맏이가 웃었다. 끝이 났다."
+        verdict = daily_passage.check(mixed, "구개음화")
+        self.assertGreater(len(verdict["others"]), daily_passage.MAX_OTHER)
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(any("다른 소리 변동" in problem for problem in verdict["problems"]))
+
     def test_targets_are_decided_by_rules_not_by_ai(self):
         targets, _ = daily_passage.find_targets("우리는 같이 해돋이를 보았다. 굳이 말하지 않았다.", "구개음화")
         self.assertEqual([t["표기"] for t in targets], ["같이", "해돋이를", "굳이"])

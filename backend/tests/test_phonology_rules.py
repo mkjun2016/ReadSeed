@@ -28,5 +28,14 @@ class PhonologyRulesTest(unittest.TestCase):
         g2p.assert_called_once_with("반닐을")
 
 
+    def test_palatalization_of_shortened_hyeo_and_jyeo(self):
+        # 제17항 붙임 + 제5항 다만 1: 닫혀요[다처요], 붙였다[부첟따]. 표기가 져인 낱말은 그대로.
+        cases = {"닫혀요": "다텨요", "묻혀서": "무텨서", "붙였다": "부쳗따", "굳혀요": "구쳐요", "가져요": "가저요"}
+        expected = {"닫혀요": "다처요", "묻혀서": "무처서", "붙였다": "부첟따", "굳혀요": "구처요", "가져요": "가저요"}
+        for word, raw in cases.items():
+            with self.subTest(word=word):
+                self.assertEqual(phonology_rules._palatalize_hyeo(word, raw), expected[word])
+
+
 if __name__ == "__main__":
     unittest.main()
