@@ -32,7 +32,7 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 PUBLIC_MODE = os.getenv("PUBLIC_MODE") == "1"
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()] or ["*"]
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "0") or 0)
-LIMITED_PATHS = ("/annotate", "/explain", "/key-info", "/ocr", "/reflow")
+LIMITED_PATHS = ("/annotate", "/explain", "/key-info", "/ocr", "/reflow", "/daily")
 
 
 class AnnotateRequest(BaseModel):
@@ -54,6 +54,11 @@ class ReflowRequest(BaseModel):
     lines: list[PageLine] = Field(..., max_length=400, description="쪽 비율 좌표의 글줄")
     aspect: float = Field(1.0, gt=0, description="쪽 너비 / 높이")
     spread: bool = Field(False, description="펼친 두 쪽이 한 장인지")
+
+
+class DailyRequest(BaseModel):
+    rule: str = Field(..., description="오늘 연습할 음운변동(예: 구개음화). 아이 기록은 보내지 않는다")
+    date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="기기의 오늘 날짜")
 
 
 class KeyInfoRequest(BaseModel):
@@ -171,6 +176,32 @@ def explain(request: AnnotateRequest) -> dict[str, Any]:
     from pipeline import explain_sentence
 
     return explain_sentence(sentence, use_llm=request.use_llm, profile=request.profile)
+
+
+@app.post("/daily")
+def daily(request: DailyRequest) -> dict[str, Any]:
+    """오늘의 읽기 글: 고른 음운변동이 많이 나오는 짧은 글(AI 생성 + 규칙 검증)."""
+    import datetime
+
+    import daily_passage
+
+    if request.rule not in daily_passage.RULES:
+        raise HTTPException(status_code=422, detail="unknown rule")
+    try:
+        day = datetime.date.fromisoformat(request.date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="bad date") from exc
+    # 기기 시간대 차이만 허용한다. 아무 날짜나 받으면 새 글을 끝없이 만들게 된다.
+    if abs((day - datetime.date.today()).days) > 1:
+        raise HTTPException(status_code=422, detail="date out of range")
+    return daily_passage.generate(request.rule, day.isoformat())
+
+
+@app.get("/daily/rules")
+def daily_rules() -> dict[str, Any]:
+    import daily_passage
+
+    return {"rules": [{"rule": name, "설명": info["설명"]} for name, info in daily_passage.RULES.items()]}
 
 
 @app.post("/key-info")

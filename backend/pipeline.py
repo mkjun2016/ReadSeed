@@ -38,14 +38,18 @@ def _format_gloss(selected: gloss_selector.Selection) -> list[dict]:
     if not selected.candidate:
         return []
     entry = selected.candidate
-    return [{
+    gloss = {
         "출처": "한국어기초사전",
         "표제어": entry["표제어"],
         "품사": entry["품사"],
         "뜻풀이": entry["뜻풀이"],
         # 근거: 어느 사전 항목인지, 왜 이 뜻을 골랐는지(규칙/AI 선택과 확신도)
         "근거": {"사전ID": entry.get("_local_id"), "선택": selected.reason, "확신도": selected.confidence},
-    }]
+    }
+    if selected.easy:
+        # AI가 고른 사전 뜻을 문맥·아이 눈높이로 다시 쓴 말. 없으면 화면은 사전 뜻을 쓴다.
+        gloss["쉬운말"] = selected.easy
+    return [gloss]
 
 
 def _lemma_of(form: str, tag: str) -> str:
@@ -271,10 +275,12 @@ def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = 
         sentence,
         [(word, tag, entries) for _, word, tag, entries in sentence_gloss_inputs],
         use_llm=use_llm,
+        # 합성 어절의 조각(장애)은 어절 전체 모양이 아니라 조각 이름에 맞춰 풀어 쓴다.
+        surfaces=[word if results[index].get("합성") else results[index]["표기"] for index, word, _, _ in sentence_gloss_inputs],
     )
     called = [s for s in selections if s.reason in ("llm_selected", "llm_uncertain")]
     if called:
-        log({"단계": "AI 문맥 선택", "도구": "Claude (후보 번호만 고름, 원문 미저장 캐시)", "낱말": len(called)})
+        log({"단계": "AI 문맥 선택", "도구": "Claude (사전 뜻 고르기 + 쉬운 말로 풀기, 원문 미저장 캐시)", "낱말": len(called)})
     for (result_index, lemma, _, entries), selected in zip(sentence_gloss_inputs, selections):
         glosses = _format_gloss(selected)
         if results[result_index].get("합성"):

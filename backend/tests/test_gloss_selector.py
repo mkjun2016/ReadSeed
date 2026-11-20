@@ -65,6 +65,21 @@ class GlossSelectorTest(unittest.TestCase):
         self.assertEqual(second.candidate["뜻풀이"], "내용을 자세히 살펴봄")
         request.assert_called_once()
 
+    def test_llm_easy_words_follow_the_chosen_sense_and_bad_text_falls_back(self):
+        candidates = [entry("바다와 땅이 맞닿은 곳이나 그 근처", local_id="1:1"), entry("다른 뜻", local_id="2:1")]
+        config = {"GLOSS_LLM_API_URL": "https://example.test", "GLOSS_LLM_API_KEY": "key", "GLOSS_LLM_MODEL": "test"}
+        gloss_selector.clear_cache()
+        good = {"decision": "show", "candidate_index": 0, "confidence": 0.95, "easy": "바다와 땅이 만나는 곳에"}
+        with patch.dict(os.environ, config, clear=True), patch.object(gloss_selector, "_load_persistent", return_value=None), patch.object(gloss_selector, "_store_selection"), patch.object(gloss_selector, "_request_llm_batch", return_value=[good]) as request:
+            result = gloss_selector.select_many("우리는 바닷가에 갔다.", [("바닷가", "NNG", candidates)], surfaces=["바닷가에"])[0]
+        self.assertEqual(result.easy, "바다와 땅이 만나는 곳에")
+        self.assertEqual(request.call_args.args[2], {0: "바닷가에"})
+        bad = {**good, "easy": "x" * 200}
+        with patch.dict(os.environ, config, clear=True), patch.object(gloss_selector, "_load_persistent", return_value=None), patch.object(gloss_selector, "_store_selection"), patch.object(gloss_selector, "_request_llm_batch", return_value=[bad]):
+            fallback = gloss_selector.select_many("우리는 바닷가에 갔다.", [("바닷가", "NNG", candidates)], surfaces=["바닷가에"])[0]
+        self.assertEqual(fallback.candidate["_local_id"], "1:1")
+        self.assertIsNone(fallback.easy)  # 화면은 사전 뜻으로 대신한다
+
     def test_llm_invalid_answer_hides_annotation(self):
         candidates = [entry("첫째", local_id="1:1"), entry("둘째", local_id="2:1")]
         config = {"GLOSS_LLM_API_URL": "https://example.test", "GLOSS_LLM_API_KEY": "key", "GLOSS_LLM_MODEL": "test"}

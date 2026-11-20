@@ -1,7 +1,9 @@
 """문맥 기반 쉬운 말 풀이 선택기.
 
-사전의 뜻풀이를 새로 만들지 않고, 문장 안에서 적절한 기존 후보 하나만 고른다.
-LLM이 설정되지 않았거나 응답이 불확실하면 보수적으로 주석을 표시하지 않는다.
+AI는 사전 후보 중 문맥에 맞는 뜻 하나를 고르고, 그 뜻만을 근거로 아이(초등 3~4학년)가
+이해할 쉬운 말로 다시 풀어 쓴다(예: 바닷가에 → "바다와 땅이 만나는 곳에"). 사전에 없는
+사실은 더하지 않으며, 원래 사전 뜻은 근거로 함께 보여 준다. AI가 꺼져 있거나 쉬운 말이
+형식 검사를 통과하지 못하면 사전 뜻만 보여 주고, 불확실하면 보수적으로 표시하지 않는다.
 """
 
 import contextvars
@@ -43,6 +45,24 @@ class Selection:
     reason: str
     confidence: float = 0.0
     suggestion: Optional[dict] = None
+    easy: Optional[str] = None  # 고른 사전 뜻을 문맥·아이 눈높이에 맞게 다시 쓴 쉬운 말
+
+
+EASY_MAX_CHARS = 60
+
+
+def clean_easy(text) -> Optional[str]:
+    """AI가 쓴 쉬운 말을 화면에 올리기 전 형식만 검사한다. 이상하면 버리고 사전 뜻을 쓴다."""
+    if not isinstance(text, str):
+        return None
+    text = " ".join(text.split()).strip(" \"'")
+    if not 2 <= len(text) <= EASY_MAX_CHARS:
+        return None
+    if not any("가" <= ch <= "힣" for ch in text):
+        return None
+    if any(mark in text for mark in ("http", "```", "{", "}")):
+        return None
+    return text
 
 
 # ---- 작동 기록: 요청 하나 안에서 일어난 도구 호출·재시도·대체를 모은다 ----
@@ -93,13 +113,16 @@ def clear_cache() -> None:
     _selection_cache.clear()
 
 
+_CREATE_TABLE = "CREATE TABLE IF NOT EXISTS decisions_v4 (cache_key TEXT PRIMARY KEY, local_id TEXT, confidence REAL, reason TEXT, easy TEXT)"
+
+
 def _load_persistent(key: str, candidates: list[dict]) -> Optional[Selection]:
     """문장 원문 없이 해시 키·선택 ID만 보관한 재시작 간 캐시를 읽는다."""
     try:
         CACHE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(CACHE_DB_PATH) as connection:
-            connection.execute("CREATE TABLE IF NOT EXISTS decisions (cache_key TEXT PRIMARY KEY, local_id TEXT, confidence REAL, reason TEXT)")
-            row = connection.execute("SELECT local_id, confidence, reason FROM decisions WHERE cache_key = ?", (key,)).fetchone()
+            connection.execute(_CREATE_TABLE)
+            row = connection.execute("SELECT local_id, confidence, reason, easy FROM decisions_v4 WHERE cache_key = ?", (key,)).fetchone()
     except sqlite3.Error:
         return None
     if not row:
@@ -107,7 +130,7 @@ def _load_persistent(key: str, candidates: list[dict]) -> Optional[Selection]:
     candidate = next((item for item in candidates if item.get("_local_id") == row[0]), None)
     if row[2] == "llm_uncertain":
         return Selection(None, row[2], row[1], suggestion=candidate)
-    return Selection(candidate, row[2], row[1])
+    return Selection(candidate, row[2], row[1], easy=row[3] if candidate else None)
 
 
 def _store_selection(key: str, selection: Selection) -> None:
@@ -117,15 +140,16 @@ def _store_selection(key: str, selection: Selection) -> None:
     try:
         CACHE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(CACHE_DB_PATH) as connection:
-            connection.execute("CREATE TABLE IF NOT EXISTS decisions (cache_key TEXT PRIMARY KEY, local_id TEXT, confidence REAL, reason TEXT)")
-            connection.execute("INSERT OR REPLACE INTO decisions VALUES (?, ?, ?, ?)", (key, (selection.candidate or selection.suggestion or {}).get("_local_id"), selection.confidence, selection.reason))
+            connection.execute(_CREATE_TABLE)
+            connection.execute("INSERT OR REPLACE INTO decisions_v4 VALUES (?, ?, ?, ?, ?)", (key, (selection.candidate or selection.suggestion or {}).get("_local_id"), selection.confidence, selection.reason, selection.easy))
     except sqlite3.Error:
         pass
 
 
-def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict]) -> str:
+def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict], surface: str = "") -> str:
     payload = {
-        "version": "gloss-selector-v3",
+        "version": "gloss-selector-v5",
+        "surface": surface,
         "model": os.getenv("GLOSS_LLM_MODEL"),
         "sentence": sentence,
         "word": word,
@@ -220,6 +244,12 @@ def _request_llm(sentence: str, word: str, pos: str, candidates: list[dict]) -> 
 
 # Claude 도구 호출: AI는 뜻을 새로 쓰지 못하고, 근거가 필요하면 get_sense_details로
 # 사전 정보(난이도·분야·품사)를 조회한 뒤 submit_decisions로만 답한다.
+EASY_RULE = (
+    "고른 사전 뜻만 근거로, 초등 3~4학년이 아는 쉬운 낱말로 다시 쓴 풀이 한 줄(40자 안팎). "
+    "명사에 조사가 붙어 있으면(surface) 그 조사를 살려 문장에 바로 넣을 수 있게 쓴다(바닷가에 → 바다와 땅이 만나는 곳에). "
+    "그 밖에는 ‘~하는 것’, ‘~한 상태’, ‘~하다’처럼 문법이 맞는 풀이로 끝낸다(해지 → 맺은 약속을 없던 일로 하는 것). "
+    "사전에 없는 사실을 더하지 않고, 풀이에 어려운 한자어를 다시 쓰지 않는다."
+)
 TOOLS = [
     {
         "name": "get_sense_details",
@@ -232,7 +262,7 @@ TOOLS = [
     },
     {
         "name": "submit_decisions",
-        "description": "낱말마다 보여 줄 후보 번호 하나 또는 hide를 제출한다. 확신이 낮거나 맞는 후보가 없으면 hide.",
+        "description": "낱말마다 보여 줄 후보 번호 하나 또는 hide를 제출한다. 확신이 낮거나 맞는 후보가 없으면 hide. show이면 easy에 쉬운 말 풀이를 쓴다.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -245,6 +275,10 @@ TOOLS = [
                             "decision": {"type": "string", "enum": ["show", "hide"]},
                             "candidate_index": {"type": ["integer", "null"]},
                             "confidence": {"type": "number"},
+                            "easy": {
+                                "type": ["string", "null"],
+                                "description": EASY_RULE + " hide이면 null.",
+                            },
                         },
                         "required": ["item_index", "decision", "candidate_index", "confidence"],
                     },
@@ -255,9 +289,15 @@ TOOLS = [
     },
 ]
 MAX_TOOL_ROUNDS = 2
+EASY_SYSTEM = (
+    "You help Korean children (grade 3-4) with reading difficulties. For each word, pick the dictionary sense "
+    "that fits the sentence, then restate ONLY that sense in very easy Korean the child already knows, shaped to "
+    "the word's form in the sentence (keep its particle/ending). Never add facts that are not in the chosen sense. "
+    "Hide the word if no sense fits or you are unsure. Use the tools only."
+)
 
 
-def _post_with_retry(url: str, headers: dict, payload: dict) -> Optional[dict]:
+def _post_with_retry(url: str, headers: dict, payload: dict, timeout: float = 10) -> Optional[dict]:
     """일시 오류(시간 초과·429·5xx)는 지수 백오프로 재시도하고, 끝내 실패하면 None."""
     if not ai_budget.take():
         # 오늘 AI 상한에 닿았다. 실패로 세지 않고(차단기를 열지 않고) 규칙으로 넘어간다.
@@ -265,7 +305,7 @@ def _post_with_retry(url: str, headers: dict, payload: dict) -> Optional[dict]:
         return None
     for attempt in range(LLM_RETRIES + 1):
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if response.status_code in (429, 500, 502, 503, 504, 529):
                 raise requests.exceptions.HTTPError(f"HTTP {response.status_code}")
             response.raise_for_status()
@@ -291,7 +331,7 @@ def _call_claude_with_tools(prompt: dict, items_candidates: dict[int, list[dict]
             "model": os.environ["GLOSS_LLM_MODEL"],
             "max_tokens": max_tokens,
             "temperature": 0,
-            "system": "You choose dictionary senses for a children's reading aid. Never write definitions. Use the tools only.",
+            "system": EASY_SYSTEM,
             "tools": TOOLS,
             "tool_choice": {"type": "tool", "name": "submit_decisions"} if last_round else {"type": "any"},
             "messages": messages,
@@ -378,27 +418,29 @@ def _call_llm(prompt: dict, max_tokens: int, items_candidates: Optional[dict] = 
         return None
 
 
-def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict]]]) -> list[Optional[dict]]:
+def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict]]], surfaces: Optional[dict] = None) -> list[Optional[dict]]:
     """한 문장의 여러 단어를 단일 Claude 호출로 판별한다."""
     prompt = {
         "task": "한국어 학습자를 위한 쉬운 말 풀이 표시 여부와 문맥상 뜻을 고르세요.",
         "rules": [
-            "뜻풀이를 새로 쓰지 말고 각 candidates의 index만 고르세요.",
+            "각 candidates에서 문맥에 맞는 사전 뜻의 index를 고르세요.",
+            "show이면 easy에 쓰세요. " + EASY_RULE,
             "일상적으로 쉬운 말·기능어(예: 대신, 국민), 문맥에 맞는 후보가 없거나 확신이 낮으면 hide를 고르세요.",
-            "JSON만 반환하세요: {\"decisions\":[{\"item_index\":정수,\"decision\":\"show\"|\"hide\",\"candidate_index\":정수|null,\"confidence\":0~1}]}",
+            "JSON만 반환하세요: {\"decisions\":[{\"item_index\":정수,\"decision\":\"show\"|\"hide\",\"candidate_index\":정수|null,\"confidence\":0~1,\"easy\":문자열|null}]}",
         ],
         "sentence": sentence,
         "items": [
             {
                 "item_index": item_index,
                 "word": word,
+                "surface": (surfaces or {}).get(item_index) or word,
                 "morpheme_tag": pos,
                 "candidates": [{"index": index, "definition": candidate.get("뜻풀이"), "field": candidate.get("분야")} for index, candidate in enumerate(candidates)],
             }
             for item_index, word, pos, candidates in items
         ],
     }
-    answer = _call_llm(prompt, 60 + 35 * len(items), {item_index: candidates for item_index, _, _, candidates in items})
+    answer = _call_llm(prompt, 80 + 90 * len(items), {item_index: candidates for item_index, _, _, candidates in items})
     if not answer or not isinstance(answer.get("decisions"), list):
         return [None] * len(items)
     by_index = {item.get("item_index"): item for item in answer["decisions"] if isinstance(item, dict)}
@@ -410,8 +452,12 @@ def select(sentence: str, word: str, pos: str, candidates: list[dict], use_llm: 
     return select_many(sentence, [(word, pos, candidates)], use_llm=use_llm)[0]
 
 
-def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm: bool = True) -> list[Selection]:
-    """한 문장의 모든 단어를 최대 한 번의 LLM 요청으로 선택한다."""
+def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm: bool = True, surfaces: Optional[list[str]] = None) -> list[Selection]:
+    """한 문장의 모든 단어를 최대 한 번의 LLM 요청으로 선택하고 쉬운 말로 풀어 쓴다.
+
+    ``surfaces``는 낱말이 문장에 실제로 나온 모양(바닷가에)이다. 쉬운 말을 그 모양에 맞춘다.
+    """
+    surfaces = surfaces or [word for word, _, _ in items]
     results: list[Optional[Selection]] = [None] * len(items)
     unresolved: list[tuple[int, str, str, list[dict], str]] = []
     pending: set[str] = set()
@@ -430,7 +476,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
             else:
                 results[item_index] = Selection(None, "llm_off" if not use_llm else "llm_not_configured")
             continue
-        key = _fingerprint(sentence, word, pos, usable)
+        key = _fingerprint(sentence, word, pos, usable, surfaces[item_index])
         cached = _selection_cache.get(key) or _load_persistent(key, usable)
         if cached:
             results[item_index] = cached
@@ -445,7 +491,11 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
     for item_index, _, _, _, _ in unresolved[MAX_WORDS_PER_SENTENCE:]:
         results[item_index] = Selection(None, "llm_budget_limited")
     requested = unresolved[:MAX_WORDS_PER_SENTENCE]
-    answers = _request_llm_batch(sentence, [(index, word, pos, candidates) for index, word, pos, candidates, _ in requested]) if requested else []
+    answers = _request_llm_batch(
+        sentence,
+        [(index, word, pos, candidates) for index, word, pos, candidates, _ in requested],
+        {index: surfaces[index] for index, _, _, _, _ in requested},
+    ) if requested else []
     for (item_index, _, _, candidates, key), answer in zip(requested, answers):
         try:
             index = answer.get("candidate_index") if answer else None
@@ -455,7 +505,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
             valid = False
             confidence = 0.0
         if valid:
-            selection = Selection(candidates[index], "llm_selected", confidence)
+            selection = Selection(candidates[index], "llm_selected", confidence, easy=clean_easy(answer.get("easy")))
         elif answer is None:
             selection = Selection(None, "llm_failed")
         elif answer.get("decision") == "hide":

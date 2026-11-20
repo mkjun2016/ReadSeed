@@ -20,6 +20,13 @@ const SESSIONS_KEY = "readseedWebSessions";
 const REVIEW_KEY = "readseedWebReviewQueue";
 const PLAN_KEY = "readseedWebPlanDemo"; // subscription demo state, written by plans.html
 const OVERRIDES_KEY = "readseedWebGlossOverrides";
+const DAILY_KEY = "readseedWebDaily"; // today's chosen sound and why (this device only)
+const DAILY_RESULTS_KEY = "readseedWebDailyResults"; // past daily tests: targets read alone vs tapped
+const DAILY_RULES = ["연음", "구개음화", "경음화", "비음화", "유음화", "격음화", "ㄴ첨가"];
+const DAILY_WEAK_RATE = 0.3; // tapped this share of a sound's words → practise it again
+const DAILY_MIN_WORDS = 5; // need this many tries before calling a sound weak
+const READER_TIP = document.querySelector("#reader-tip p")?.innerHTML || "";
+let dailyTest = null; // { rule, targets: [{표기, 발음}] } while a daily test is open
 let readingStarted = 0;
 let readingTitle = "";
 // Words the child has not seen for this long are removed from the device.
@@ -127,14 +134,14 @@ function loadSettings() {
 
 function assistSettings() {
   return {
-    pronunciation: settings.pronunciation,
     gloss: settings.gloss,
     keyInfo: false,
     readingGuide: false,
     annotationSize: "medium",
     density: "high",
     readingSpeed: settings.readingSpeed,
-    reveal: settings.reveal,
+    reveal: dailyTest ? "tap" : settings.reveal,
+    pronunciation: dailyTest ? true : settings.pronunciation,
   };
 }
 
@@ -223,6 +230,8 @@ function setStatus(text) {
   dockStatus.textContent = text;
 }
 
+const partial = (failed) => (failed ? ` · ${failed}문장은 힌트를 못 만들었어요` : "");
+
 function reportResult(summary, failed, results = []) {
   if (failed && !summary.pronunciation && !summary.gloss) {
     const tooLong = results.some((result) => /longer than/.test(result?.error || ""));
@@ -232,15 +241,19 @@ function reportResult(summary, failed, results = []) {
       : "힌트 서버에 연결하지 못했어요. 서버가 켜져 있는지 확인한 뒤 다시 열어 주세요.");
     return;
   }
+  if (dailyTest) {
+    setStatus(`밑줄 없이 혼자 읽어요 · 막히는 낱말만 톡 누르면 답이 나와요${partial(failed)}`);
+    return;
+  }
   const parts = [];
   if (settings.pronunciation) parts.push(`읽는 법 ${summary.pronunciation}`);
   if (settings.gloss) parts.push(`쉬운 뜻 ${summary.gloss}`);
   const how = settings.reveal === "tap" ? "밑줄 친 낱말을 눌러 보세요" : "낱말을 누르면 크게 볼 수 있어요";
   const privacy = maskedCount ? ` · 개인정보로 보이는 ${maskedCount}곳은 가리고 보냈어요` : "";
-  const partial = failed ? ` · ${failed}문장은 힌트를 못 만들었어요` : "";
+
   const unsure = results.filter((result) => result?.uncertain).length;
   const ocrNote = unsure ? ` · 글자 인식이 불확실한 ${unsure}문장은 힌트를 쉬었어요(‘원래 쪽 보기’로 비교)` : "";
-  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial + ocrNote + adaptationNote() + difficultyNote(results) + privacy);
+  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial(failed) + ocrNote + adaptationNote() + difficultyNote(results) + privacy);
 }
 
 // State changes what the child sees: a word read right on three days needs no hint,
@@ -335,6 +348,8 @@ function withState(results) {
         const chosen = overrides[key];
         word = { ...word, 뜻풀이후보: chosen ? [{ 출처: "한국어기초사전", 표제어: key, 뜻풀이: chosen.뜻풀이, 근거: { 사전ID: chosen.local_id, 선택: "teacher" } }] : [] };
       }
+      // Daily test: no underline is drawn, so every answer stays ready behind a tap.
+      if (dailyTest) return word;
       if (hidden.has(word.표기)) return { ...word, 다름: false, 뜻풀이후보: [] };
       if (!word.다름) return word;
       if (profile.struggling.has(word.유형)) return { ...word, 맞춤: "struggle" };
@@ -403,6 +418,10 @@ function showView(view) {
 
 function leaveReader() {
   run += 1;
+  dailyTest = null;
+  delete document.body.dataset.test;
+  $("#reader-tip p").innerHTML = READER_TIP;
+  updateDailyTile();
   textAssist.clearOverlay();
   pdfAssist.clearOverlay();
   patchAssist.clearOverlay();
@@ -985,15 +1004,20 @@ function hideCard() {
 function showCard(info) {
   const glosses = info.gloss ? (info.word?.뜻풀이후보 || []).filter((item) => item?.뜻풀이) : [];
   const candidate = glosses[0] || null;
-  const meaning = candidate?.뜻풀이?.replace(/\s+/g, " ").trim() || null;
+  const meaning = candidate ? meaningOf(candidate) : null;
   $("#hint-word").textContent = info.surface;
 
   const sound = $("#hint-sound");
-  sound.hidden = !info.pronunciation;
+  sound.hidden = !info.pronunciation && !info.plain;
   if (info.pronunciation) {
     const caption = document.createElement("small");
     caption.textContent = "이렇게 읽어요";
-    sound.replaceChildren(caption, `[${info.pronunciation}]`);
+    // Seeing only [가치] can turn into writing 가치 (expert advice), so the card
+    // always says the spelling stays as written.
+    const writeAs = element("small", "write-as", `쓸 때는 글자 그대로 ‘${info.surface}’`);
+    sound.replaceChildren(caption, `[${info.pronunciation}]`, writeAs);
+  } else if (info.plain) {
+    sound.replaceChildren(element("small", "", "쓰인 대로 읽어요"), `[${info.surface}]`);
   }
   // Pronunciation comes first; the meaning is one more tap away so the card stays small.
   const meaningElement = $("#hint-meaning");
@@ -1005,12 +1029,17 @@ function showCard(info) {
   basis.textContent = basisText(info, candidate);
   basis.hidden = !basis.textContent;
   card.dataset.surface = info.surface;
+  $(".hint-links").hidden = Boolean(info.plain); // nothing to explain or report for a word read as written
   lastCardWord = info.word;
   card.dataset.pronunciation = info.pronunciation || "";
 
   card.hidden = false;
   placeCard(info.rect);
-  logTap(info, meaning && candidate.부분 ? `${headword(candidate)}: ${meaning}` : meaning, meaning && !info.pronunciation);
+  if (info.plain) {
+    if (dailyTest) dailyTest.plain.add(info.surface);
+  } else {
+    logTap(info, meaning && candidate.부분 ? `${headword(candidate)}: ${meaning}` : meaning, meaning && !info.pronunciation);
+  }
   countTipTap();
 }
 
@@ -1021,6 +1050,12 @@ function headword(gloss) {
   return (gloss.표제어 || "").replace(/\^/g, " ").replace(/-/g, "");
 }
 
+// AI rewrites the chosen dictionary sense in easy words that fit the sentence
+// (바닷가에 → 바다와 땅이 만나는 곳에). The dictionary sense stays underneath as proof.
+function meaningOf(gloss) {
+  return (gloss.쉬운말 || gloss.뜻풀이 || "").replace(/\s+/g, " ").trim() || null;
+}
+
 function meaningParts(glosses) {
   const parts = glosses[0]?.부분 ? glosses.slice(0, 2) : glosses.slice(0, 1);
   return parts.flatMap((gloss) => {
@@ -1028,8 +1063,12 @@ function meaningParts(glosses) {
     caption.textContent = gloss.부분 ? `‘${headword(gloss)}’의 뜻` : "쉬운 뜻";
     const text = document.createElement("span");
     text.className = "meaning-text";
-    text.textContent = gloss.뜻풀이.replace(/\s+/g, " ").trim();
-    return [caption, text];
+    text.textContent = meaningOf(gloss);
+    if (!gloss.쉬운말) return [caption, text];
+    const dictionary = document.createElement("small");
+    dictionary.className = "meaning-dict";
+    dictionary.textContent = `사전 뜻: ${gloss.뜻풀이.replace(/\s+/g, " ").trim()}`;
+    return [caption, text, dictionary];
   });
 }
 
@@ -1047,7 +1086,7 @@ function basisText(info, candidate) {
   const sound = info.word?.근거?.발음;
   if (info.pronunciation && sound?.출처) parts.push(`읽는 법: ${sound.출처} ‘${sound.표제어}’`);
   else if (info.pronunciation && sound?.표준발음법?.length) parts.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : candidate.근거?.선택 === "teacher" ? "뜻: 한국어기초사전 · 선생님이 확인" : "뜻: 한국어기초사전");
+  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? (candidate.쉬운말 ? "뜻: 한국어기초사전 뜻을 AI가 문맥에 맞게 쉽게 풀어 씀" : "뜻: 한국어기초사전 · 문맥으로 고름") : candidate.근거?.선택 === "teacher" ? "뜻: 한국어기초사전 · 선생님이 확인" : "뜻: 한국어기초사전");
   const why = info.word?.맞춤 === "struggle" ? ` · 자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
   return parts.length ? `근거 — ${parts.join(" / ")}${why}` : "";
 }
@@ -1112,9 +1151,191 @@ function contextOf(range) {
 }
 
 function onTextTap(event) {
-  const info = wordNear(event.clientX, event.clientY);
+  const info = wordNear(event.clientX, event.clientY) || (dailyTest && plainWordAt(event.clientX, event.clientY));
   if (info) showCard(info);
   else hideCard();
+}
+
+// In the daily test any word can be tapped. A word read as written has no hint
+// entry, so find it under the finger and answer "쓰인 대로 읽어요".
+function plainWordAt(x, y) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    node = position?.offsetNode;
+    offset = position?.offset || 0;
+  } else if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    node = range?.startContainer;
+    offset = range?.startOffset || 0;
+  }
+  if (!node || node.nodeType !== Node.TEXT_NODE || !storyBody.contains(node)) return null;
+  const text = node.textContent;
+  let start = Math.min(offset, text.length);
+  let end = start;
+  while (start > 0 && /[가-힣]/.test(text[start - 1])) start -= 1;
+  while (end < text.length && /[가-힣]/.test(text[end])) end += 1;
+  if (start === end) return null;
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  const rect = range.getBoundingClientRect();
+  if (x < rect.left - 12 || x > rect.right + 12 || y < rect.top - 12 || y > rect.bottom + 12) return null;
+  return { rect, range, word: null, surface: text.slice(start, end), pronunciation: null, gloss: null, plain: true };
+}
+
+// ---------- Daily reading (오늘의 읽기) ----------
+// Each day one sound change is practised in a short AI-written passage that the
+// server checks with the pronunciation rules (the AI never decides a sound). The
+// child reads it with no underlines and taps only the words they get stuck on. Which
+// sound comes next is chosen here, on the device, from past daily results and the word
+// notebook; only the sound's name is sent to the server.
+
+function loadDailyResults() {
+  const results = loadJSON(DAILY_RESULTS_KEY, []);
+  return Array.isArray(results) ? results.filter((item) => item && DAILY_RULES.includes(item.rule)) : [];
+}
+
+// Per sound: how many of its words the child met in daily tests and how many they
+// had to tap, plus words of that sound still being learned in the notebook.
+function dailyStats() {
+  const stats = new Map(DAILY_RULES.map((rule) => [rule, { rule, tries: 0, stuck: 0, learning: 0, last: "" }]));
+  for (const result of loadDailyResults().slice(-30)) {
+    const row = stats.get(result.rule);
+    row.tries += result.targets;
+    row.stuck += result.stuck.length;
+    row.last = result.date > row.last ? result.date : row.last;
+  }
+  for (const word of loadNotebook()) {
+    if (!word.learned && stats.has(word.type)) stats.get(word.type).learning += 1;
+  }
+  for (const row of stats.values()) row.rate = row.tries ? row.stuck / row.tries : null;
+  return [...stats.values()];
+}
+
+function isWeak(row) {
+  return (row.tries >= DAILY_MIN_WORDS && row.rate >= DAILY_WEAK_RATE) || row.learning >= STRUGGLE_ACTIVE;
+}
+
+function pickDailyRule() {
+  const stats = dailyStats();
+  const yesterday = loadDailyResults().at(-1)?.rule;
+  const weak = stats.filter(isWeak).sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0) || b.learning - a.learning);
+  // Practise the weakest sound, but not three days in a row: another weak one goes in between.
+  const twice = loadDailyResults().slice(-2).every((result) => result.rule === weak[0]?.rule);
+  const pick = weak.find((row) => !(twice && row.rule === weak[0].rule && weak.length > 1)) || null;
+  if (pick) {
+    const why = pick.tries >= DAILY_MIN_WORDS && pick.rate >= DAILY_WEAK_RATE
+      ? `지난 오늘의 읽기에서 ${pick.rule} 낱말 ${pick.tries}개 중 ${pick.stuck}개를 눌러 봤어요. 한 번 더 연습해요.`
+      : `낱말 공책에 아직 익히는 중인 ${pick.rule} 낱말이 ${pick.learning}개 있어요.`;
+    return { rule: pick.rule, reason: why, weak: true };
+  }
+  // Nothing weak yet: go round the sounds, the one practised longest ago first.
+  const order = [...stats].sort((a, b) => a.last.localeCompare(b.last) || DAILY_RULES.indexOf(a.rule) - DAILY_RULES.indexOf(b.rule));
+  const next = order.find((row) => row.rule !== yesterday) || order[0];
+  return { rule: next.rule, reason: next.last ? "돌아가며 연습하는 날이에요." : "아직 연습해 보지 않은 소리예요.", weak: false };
+}
+
+function todaysDaily() {
+  const saved = loadJSON(DAILY_KEY, null);
+  if (saved?.date === today() && DAILY_RULES.includes(saved.rule)) return saved;
+  const chosen = { date: today(), ...pickDailyRule() };
+  writeStorage(DAILY_KEY, JSON.stringify(chosen));
+  return chosen;
+}
+
+function updateDailyTile() {
+  const plan = todaysDaily();
+  const now = new Date();
+  $("#daily-date").textContent = `${now.getMonth() + 1}월 ${now.getDate()}일`;
+  $("#daily-title").textContent = `오늘은 ‘${plan.rule}’ 연습`;
+  $("#daily-desc").textContent = TYPE_HELP[plan.rule] || "";
+  $("#daily-reason").textContent = `${plan.weak ? "아이 맞춤 · " : ""}${plan.reason}`;
+  const done = loadDailyResults().filter((result) => result.date === today() && result.rule === plan.rule).at(-1);
+  $("#daily-done").hidden = !done;
+  if (done) $("#daily-done").textContent = `오늘 ${done.targets}개 중 ${done.targets - done.stuck.length}개를 혼자 읽었어요`;
+  $("#daily-start").textContent = done ? "한 번 더 읽기" : "혼자 읽어 보기";
+  fetchDaily(plan).catch(() => {}); // warm up; errors are shown when the child taps start
+  $("#daily-rules").replaceChildren(...dailyStats().filter((row) => row.tries || row.learning || row.rule === plan.rule).map((row) => {
+    const label = row.tries ? `${row.rule} ${Math.round((1 - row.rate) * 100)}% 혼자` : row.rule;
+    return element("li", row.rule === plan.rule ? "today" : isWeak(row) ? "weak" : "", label);
+  }));
+}
+
+// A new passage takes the AI about half a minute to write and check, so it is asked
+// for as soon as the home screen shows; the same day's passage then comes from the cache.
+let dailyRequest = null;
+function fetchDaily(plan) {
+  const key = `${plan.date}:${plan.rule}`;
+  if (dailyRequest?.key !== key) {
+    const promise = fetch("/daily", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rule: plan.rule, date: plan.date }),
+    }).then(async (response) => {
+      const passage = await response.json().catch(() => null);
+      if (!response.ok || !passage?.text) throw new Error(passage?.detail || `요청 실패 (${response.status})`);
+      return passage;
+    });
+    promise.catch(() => { if (dailyRequest?.promise === promise) dailyRequest = null; });
+    dailyRequest = { key, promise };
+  }
+  return dailyRequest.promise;
+}
+
+async function startDaily() {
+  const plan = todaysDaily();
+  const start = $("#daily-start");
+  start.disabled = true;
+  $("#daily-reason").textContent = "AI가 오늘의 글을 쓰고, 규칙으로 소리를 확인하고 있어요…";
+  try {
+    const passage = await fetchDaily(plan);
+    dailyTest = { rule: plan.rule, targets: passage.targets || [], plain: new Set(), result: null, trace: passage.trace || [] };
+    document.body.dataset.test = "on";
+    openText({ title: passage.title, kind: `오늘의 읽기 · ${plan.rule}${passage.source === "ai" ? " · AI가 쓰고 규칙으로 확인한 글" : ""}`, text: passage.text });
+    $("#reader-tip").hidden = false;
+    $("#reader-tip p").textContent = "오늘은 밑줄이 없어요. 소리 내어 혼자 읽어 보고, 막히는 낱말만 톡 눌러요. 다 읽으면 ‘다 읽었어요’.";
+  } catch (error) {
+    updateDailyTile();
+    $("#daily-reason").textContent = `오늘의 글을 불러오지 못했어요. 잠시 뒤 다시 눌러 주세요. (${error.message})`;
+  } finally {
+    start.disabled = false;
+  }
+}
+
+function finishDaily() {
+  if (!dailyTest || dailyTest.result) return;
+  const tapped = new Set([...taps.keys()]);
+  const stuck = dailyTest.targets.filter((target) => tapped.has(target.표기));
+  const result = {
+    date: today(),
+    rule: dailyTest.rule,
+    targets: dailyTest.targets.length,
+    stuck: stuck.map((target) => target.표기),
+    words: dailyTest.targets.map((target) => target.표기),
+    otherTaps: tapped.size - stuck.length + dailyTest.plain.size,
+  };
+  dailyTest.result = result;
+  writeStorage(DAILY_RESULTS_KEY, JSON.stringify([...loadDailyResults(), result].slice(-90)));
+}
+
+function dailyReportBlock(result) {
+  const alone = result.targets - result.stuck.length;
+  const box = element("section", "report-group daily-report");
+  const score = element("p", "daily-score", `오늘의 소리 ‘${result.rule}’ 낱말 `);
+  score.append(element("b", "", String(alone)), ` / ${result.targets}개를 힌트 없이 읽었어요`);
+  const list = element("ul", "daily-words");
+  for (const word of result.words) {
+    const stuck = result.stuck.includes(word);
+    list.append(element("li", stuck ? "stuck" : "alone", `${word} ${stuck ? "· 힌트 봄" : "✓"}`));
+  }
+  const next = pickDailyRule();
+  const note = next.rule === result.rule && next.weak
+    ? `‘${result.rule}’는 다음에도 한 번 더 연습해요.`
+    : "다음 오늘의 읽기는 기록을 보고 아이에게 맞는 소리로 골라요.";
+  box.append(score, list, element("p", "report-note", `힌트 없이 읽은 낱말은 아이가 스스로 읽었다고 본 거예요. 소리 내어 읽는지 옆에서 들어 주세요. ${note}`));
+  return box;
 }
 
 // ---------- Reading report ----------
@@ -1126,16 +1347,17 @@ function renderReport() {
   const meanings = entries.filter((entry) => entry.meaning);
   const intro = document.createElement("p");
   intro.className = "report-number";
+  const daily = dailyTest?.result ? [dailyReportBlock(dailyTest.result)] : [];
   if (!entries.length) {
     intro.textContent = "힌트 없이 끝까지 읽었어요. 멋져요!";
-    body.replaceChildren(intro);
+    body.replaceChildren(...daily, intro);
     return;
   }
   intro.append("힌트를 본 낱말 ");
   const count = document.createElement("b");
   count.textContent = String(entries.length);
   intro.append(count, "개");
-  const parts = [intro];
+  const parts = [...daily, intro];
   saveToNotebook(entries);
 
   const byType = new Map();
@@ -1541,33 +1763,6 @@ async function openBook(book, button) {
   }
 }
 
-function renderHero() {
-  const hero = $("#book-hero");
-  const slides = BOOKS.map((book, index) => {
-    const others = [book, ...BOOKS.filter((other) => other !== book)];
-    const slide = element("button", "hero-slide",
-      element("span", "",
-        element("span", "eyebrow", `선생님 추천 · ${book.tag}`),
-        element("span", "headline", book.hero[0], element("b", "", book.hero[1])),
-        element("span", "meta", `${book.by} · ${book.note}`)),
-      element("span", "hero-covers", ...others.map(coverImage)));
-    slide.type = "button";
-    slide.dataset.tone = book.tone;
-    slide.setAttribute("aria-label", `${book.title} 읽기 (${index + 1}/${BOOKS.length})`);
-    slide.addEventListener("click", () => openBook(book, null));
-    return slide;
-  });
-  hero.replaceChildren(...slides);
-  const dots = BOOKS.map(() => element("span"));
-  $("#hero-dots").replaceChildren(...dots);
-  const mark = () => {
-    const index = Math.round(hero.scrollLeft / Math.max(1, hero.clientWidth));
-    dots.forEach((dot, i) => dot.classList.toggle("on", i === index));
-  };
-  hero.addEventListener("scroll", mark, { passive: true });
-  mark();
-}
-
 function renderShelf() {
   $("#book-shelf").replaceChildren(...BOOKS.map((book, index) => {
     const button = element("button", "book",
@@ -1761,7 +1956,7 @@ $("#clear-notebook").addEventListener("click", (event) => confirmTwice(event.cur
   updateNotebookTile();
 }));
 $("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentTarget, "모든 기록 지우기", () => {
-  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY, TIP_KEY, PLAN_KEY]) {
+  for (const key of [NOTEBOOK_KEY, FEEDBACK_KEY, SESSIONS_KEY, REVIEW_KEY, OVERRIDES_KEY, SETTINGS_KEY, CONSENT_KEY, GUIDE_KEY, TIP_KEY, PLAN_KEY, DAILY_KEY, DAILY_RESULTS_KEY]) {
     try { localStorage.removeItem(key); } catch (_error) { /* nothing stored */ }
   }
   location.reload();
@@ -1769,7 +1964,7 @@ $("#clear-all").addEventListener("click", (event) => confirmTwice(event.currentT
 $("#export-feedback").addEventListener("click", () => {
   const sessions = loadSessions();
   const days = new Set(sessions.map((session) => session.date)).size;
-  const payload = { exported: today(), note: "익명 기록 — 글 내용·이름 없음", daysUsed: days, sessions, reports: loadReports() };
+  const payload = { exported: today(), note: "익명 기록 — 이름 없음. 오늘의 읽기 결과는 연습 글의 낱말만 담아요", daysUsed: days, sessions, reports: loadReports(), dailyResults: loadDailyResults() };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
@@ -1858,7 +2053,8 @@ function logSession(extra = {}) {
 
 $("#finish-reading").addEventListener("click", () => {
   stopStudy();
-  if (readingStarted) logSession();
+  if (readingStarted) logSession(dailyTest ? { daily: dailyTest.rule } : {});
+  if (dailyTest) finishDaily();
   renderReport();
   openDialog($("#report"));
 });
@@ -1878,6 +2074,7 @@ document.querySelectorAll("dialog").forEach((dialog) => {
   if (dialog.id === "consent") dialog.addEventListener("cancel", (event) => event.preventDefault());
 });
 storyBody.addEventListener("click", onTextTap);
+$("#daily-start").addEventListener("click", startDaily);
 pdfPages.addEventListener("click", onTextTap);
 document.addEventListener("click", (event) => {
   if (!card.contains(event.target) && !storyBody.contains(event.target) && !pdfPages.contains(event.target)) hideCard();
@@ -1902,10 +2099,10 @@ window.addEventListener("resize", () => {
   }
 });
 
-renderHero();
 renderShelf();
 renderSamples();
 updateNotebookTile();
+updateDailyTile();
 // Home demo: the same two taps as in a real text (sound, then meaning), all local.
 $("#try-word").addEventListener("click", () => {
   const hint = $("#try-hint");

@@ -55,6 +55,21 @@
         </div>
       </section>
 
+      <section id="daily-tile" class="daily-tile" aria-labelledby="daily-title">
+        <div class="daily-head">
+          <span class="daily-badge">오늘의 읽기 <span id="daily-date"></span></span>
+          <h2 id="daily-title">오늘의 소리를 고르고 있어요</h2>
+          <p id="daily-desc" class="daily-desc"></p>
+          <p id="daily-reason" class="daily-reason"></p>
+        </div>
+        <div class="daily-side">
+          <button id="daily-start" class="primary-button" type="button">혼자 읽어 보기</button>
+          <p class="daily-note">밑줄 없이 혼자 읽어요. 막히는 낱말만 눌러요.</p>
+          <p id="daily-done" class="daily-done" hidden></p>
+        </div>
+        <ul id="daily-rules" class="daily-rules" aria-label="소리별 기록"></ul>
+      </section>
+
       <ol class="how" aria-label="이렇게 읽어요">
         <li><i class="how-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 6.5C10.3 5.2 7.8 4.5 4 4.5v13c3.8 0 6.3.7 8 2 1.7-1.3 4.2-2 8-2v-13c-3.8 0-6.3.7-8 2zM12 6.5v13" /></svg></i><b>글 고르기</b><span>연습 글·PDF·붙여 넣은 글</span></li>
         <li><i class="how-icon sound" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19h14" /><path d="M7 15.5h10" stroke-dasharray="1.5 3" /><circle cx="12" cy="8" r="2.4" /><path d="M12 2.8v1.4M16.6 4.5l-1 1M7.4 4.5l1 1" /></svg></i><b>낱말 톡</b><span>읽는 법 → 한 번 더 쉬운 뜻</span></li>
@@ -75,10 +90,6 @@
         <div class="section-head">
           <h2 id="samples-title">책장에서 골라 읽기</h2>
           <p>표지를 누르면 바로 펼쳐져요.</p>
-        </div>
-        <div class="hero-wrap">
-          <div id="book-hero" class="hero" aria-roledescription="추천 책 넘기기"></div>
-          <div id="hero-dots" class="hero-dots" aria-hidden="true"></div>
         </div>
         <h3 class="shelf-title">선생님이 고른 읽기 책</h3>
         <div id="book-shelf" class="shelf" role="list"></div>
@@ -153,7 +164,7 @@
     <main id="reader" class="reader" hidden>
       <aside id="reader-tip" class="reader-tip" hidden>
         <span class="tip-demo" aria-hidden="true">굳이</span>
-        <p><b>점선 밑줄</b> 낱말을 톡 누르면 읽는 법이 나와요. 뜻은 카드에서 한 번 더. 다 읽으면 <b>다 읽었어요</b>를 눌러요.</p>
+        <p><b>밑줄</b> 낱말을 톡 누르면 읽는 법이 나와요. 뜻은 카드에서 한 번 더. 다 읽으면 <b>다 읽었어요</b>를 눌러요.</p>
         <button id="tip-close" class="icon-button small" type="button" aria-label="안내 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
       </aside>
       <article id="story" class="story" aria-labelledby="story-title" hidden>
@@ -169,7 +180,8 @@
     <nav id="reader-dock" class="reader-dock" aria-label="읽기 도구" hidden>
       <span id="dock-status" class="dock-status" role="status"></span>
       <div class="legend" aria-label="힌트 표시">
-        <span class="legend-item tap-only"><i></i>점선 낱말을 톡</span>
+        <span class="legend-item tap-only"><i></i>밑줄 낱말을 톡</span>
+        <span class="legend-item test-only">혼자 읽기 · 막히면 낱말을 톡</span>
         <span class="legend-item sound always-only"><i></i>읽는 법</span>
         <span class="legend-item meaning always-only"><i></i>쉬운 뜻</span>
       </div>
@@ -249,7 +261,8 @@
         <h2 id="consent-title">보호자께 먼저 알려 드려요</h2>
         <ul class="consent-list">
           <li><b>읽는 글</b> — 힌트를 만들려고 서버로 보내요. 서버는 글과 PDF·사진을 저장하지 않아요.</li>
-          <li><b>AI 뜻 고르기</b> — 켜면 뜻이 여러 개인 낱말이 있는 문장만 Anthropic Claude로 보내 알맞은 뜻 하나를 고르게 해요. 끄면 밖으로 보내지 않아요.</li>
+          <li><b>AI 뜻 고르기</b> — 켜면 어려운 낱말이 있는 문장만 Anthropic Claude로 보내, 사전 뜻 가운데 알맞은 것을 고르고 그 뜻을 아이 눈높이의 쉬운 말로 풀어 쓰게 해요. 사전 뜻도 함께 보여 줘요. 끄면 밖으로 보내지 않고 사전 뜻만 보여요.</li>
+          <li><b>오늘의 읽기</b> — 서버에는 오늘 연습할 소리 이름(예: 구개음화)만 보내요. 어떤 낱말에서 막혔는지는 이 기기에만 남아요.</li>
           <li><b>개인정보 가리기</b> — 전화번호·이메일·주민등록번호·카드번호처럼 보이는 숫자는 보내기 전에 가려요.</li>
           <li><b>낱말 공책</b> — 이 기기에만 저장되고, 90일 동안 다시 보지 않은 낱말은 저절로 지워져요. 설정에서 언제든 모두 지울 수 있어요.</li>
           <li><b>진단 아님</b> — 읽기 기록은 참고용이에요. 난독증 여부를 판단하지 않아요.</li>
@@ -374,7 +387,7 @@
             <div class="guide-art"><span class="art-tile">연습 글</span><span class="art-tile">PDF</span></div>
           </li>
           <li>
-            <div><b>점선 밑줄 낱말을 톡</b><span>소리가 글자와 다른 낱말에 밑줄이 있어요. 누르면 읽는 법이 나와요.</span></div>
+            <div><b>밑줄 낱말을 톡</b><span>소리가 글자와 다른 낱말에 밑줄이 있어요. 누르면 읽는 법이 나와요.</span></div>
             <div class="guide-art"><span class="art-word">굳이</span><span class="art-card sound"><small>이렇게 읽어요</small>[구지]</span></div>
           </li>
           <li>

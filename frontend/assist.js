@@ -542,6 +542,7 @@
     .box span { display: block; }
     .sound { background: oklch(0.955 0.03 280); color: oklch(0.45 0.21 280); font-size: 24px; font-weight: 800; }
     .meaning { background: oklch(0.955 0.035 175); color: oklch(0.40 0.10 175); font-size: 16px; font-weight: 600; }
+    .meaning .dict { display: block; margin-top: 6px; font-size: 12px; font-weight: 500; opacity: 0.8; }
     .basis { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); color: rgba(0,0,0,.5); font-size: 12.5px; }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     @media (prefers-reduced-motion: reduce) { .card { animation: none; } }`;
@@ -589,14 +590,15 @@
       if (parts.length) {
         children.push(el("p", "box meaning", ...parts.flatMap((gloss) => [
           el("small", "", gloss.부분 ? `‘${headword(gloss)}’의 뜻` : "쉬운 뜻"),
-          el("span", "", gloss.뜻풀이.replace(/\s+/g, " ").trim()),
+          el("span", "", (gloss.쉬운말 || gloss.뜻풀이).replace(/\s+/g, " ").trim()),
+          ...(gloss.쉬운말 ? [el("small", "dict", `사전 뜻: ${gloss.뜻풀이.replace(/\s+/g, " ").trim()}`)] : []),
         ])));
       }
       const basis = [];
       const sound = info.word?.근거?.발음;
       if (info.pronunciation && sound?.출처) basis.push(`읽는 법: ${sound.출처}`);
       else if (info.pronunciation && sound?.표준발음법?.length) basis.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-      if (parts.length) basis.push(parts[0].근거?.선택 === "llm_selected" ? "뜻: 한국어기초사전 · 문맥으로 고름" : "뜻: 한국어기초사전");
+      if (parts.length) basis.push(parts[0].근거?.선택 === "llm_selected" ? (parts[0].쉬운말 ? "뜻: 한국어기초사전 뜻을 AI가 문맥에 맞게 쉽게 풀어 씀" : "뜻: 한국어기초사전 · 문맥으로 고름") : "뜻: 한국어기초사전");
       if (basis.length) children.push(el("p", "basis", `근거 — ${basis.join(" / ")}`));
       card.replaceChildren(...children);
       card.hidden = false;

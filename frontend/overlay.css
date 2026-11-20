@@ -55,7 +55,7 @@
   position: absolute;
   z-index: 1;
   height: 0;
-  border-bottom: 2px dotted oklch(0.554 0.214 280 / 0.75);
+  border-bottom: 2px solid oklch(0.554 0.214 280 / 0.75);
 }
 
 /*
