@@ -616,6 +616,8 @@ async function openPdf(file) {
     return;
   }
   const thisRun = startReading(file.name.replace(/\.pdf$/i, ""));
+  // A PDF is often a school or clinic document: say up front that ReadSeed does not diagnose.
+  $("#safety-card").hidden = false;
   closePdf();
   mode = "pdf";
   document.body.dataset.mode = mode;
