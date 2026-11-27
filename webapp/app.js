@@ -1901,7 +1901,7 @@ function renderStudyEnd() {
   const parts = [element("p", "study-cheer", cheer), list,
     element("p", "report-note", `다른 날 혼자 맞게 읽을 때마다 별이 하나씩 쌓이고, ${LEARNED_STREAK}개가 되면 다 익힌 낱말이에요.`)];
   const again = study.entries.filter((entry) => study.again.has(entry.surface));
-  parts.push(element("div", "study-actions",
+  parts.push(element("div", again.length ? "study-actions" : "study-actions single",
     ...(again.length ? [button("이 낱말만 다시", "study-choice", () => startStudy(again, study.from))] : []),
     button("홈으로", "study-choice good", goHome)));
   body.replaceChildren(...parts);

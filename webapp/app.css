@@ -925,6 +925,7 @@ body[data-mode="pdf"] .legend { display: none; }
 .study-answer.meaning { background: var(--meaning-tint); color: var(--meaning); font-size: 19px; line-height: 1.5; }
 .study-rule { color: var(--ink); font-size: 16px; font-weight: 600; }
 .study-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.study-actions.single { grid-template-columns: minmax(0, 50%); justify-content: center; }
 .study-choice { min-height: 56px; border: 0; border-radius: 14px; background: var(--fill); color: var(--ink); font-size: 18px; font-weight: 700; }
 .study-choice.good { background: var(--brand); color: white; }
 .study-choice:active { filter: brightness(0.94); }
