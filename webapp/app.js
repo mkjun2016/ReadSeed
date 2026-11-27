@@ -1754,8 +1754,6 @@ function dailyReportBlock(result) {
 function renderReport() {
   const body = $("#report-body");
   const entries = [...taps.values()];
-  const sounds = entries.filter((entry) => entry.pronunciation);
-  const meanings = entries.filter((entry) => entry.meaning);
   const intro = document.createElement("p");
   intro.className = "report-number";
   const daily = dailyTest?.result ? [dailyReportBlock(dailyTest.result)] : [];
@@ -1764,40 +1762,16 @@ function renderReport() {
     body.replaceChildren(...daily, intro);
     return;
   }
-  intro.append("힌트를 본 낱말 ");
+  intro.append("힌트를 눌러 본 낱말 ");
   const count = document.createElement("b");
   count.textContent = String(entries.length);
   intro.append(count, "개");
   const parts = [...daily, intro];
   saveToNotebook(entries);
 
-  const byType = new Map();
-  for (const entry of sounds) {
-    const type = entry.type || "기타";
-    byType.set(type, [...(byType.get(type) || []), entry]);
-  }
-  for (const [type, words] of [...byType].sort((a, b) => b[1].length - a[1].length)) {
-    parts.push(reportGroup(TYPE_HELP[type] || "소리가 글자와 다르게 나요", type, words.map((word) => `${word.surface} [${word.pronunciation}]`), ""));
-  }
-  if (meanings.length) {
-    parts.push(reportGroup("뜻을 찾아본 낱말", "", meanings.map((word) => word.surface), "meaning"));
-  }
-  const note = document.createElement("p");
-  note.className = "report-note";
-  const profile = learnerProfile();
-  if (settings.adapt && (profile.struggling.size || profile.mastered.size)) {
-    const lines = [];
-    for (const row of profile.rows.filter((row) => profile.struggling.has(row.type))) {
-      lines.push(`자주 막힌 소리 · ${row.type} (${row.active}낱말: ${row.examples.join(", ")}) → 다음 글에서 힌트를 꼭 보여 줘요`);
-    }
-    for (const row of profile.rows.filter((row) => profile.mastered.has(row.type))) {
-      lines.push(`익힌 소리 · ${row.type} (${row.learned}낱말 익힘) → 힌트를 줄여요`);
-    }
-    parts.push(reportGroup("다음 읽기에 맞춘 힌트", "낱말 공책 기록으로 정해요. 설정에서 끌 수 있어요.", lines, "adapt"));
-  }
-  parts.push(element("p", "report-note", "이 기록은 읽기를 돕기 위한 참고 기록이에요. 난독증 같은 진단이 아니에요."));
-  note.textContent = "힌트를 본 낱말을 혼자 읽어 보며 한 번 더 익혀요.";
-  parts.push(note, button(`낱말 공부하기 (${entries.length}개)`, "primary-button wide", () => startStudy(entries)));
+  // Kept short on purpose: the words the child tapped, then straight to practice.
+  parts.push(reportGroup("", "", entries.map((entry) => entry.surface), ""));
+  parts.push(button(`낱말 공부하기 (${entries.length}개)`, "primary-button wide", () => startStudy(entries)));
   body.replaceChildren(...parts);
 }
 
@@ -2071,9 +2045,11 @@ function pickReview(words) {
 function reportGroup(title, caption, words, chipClass) {
   const group = document.createElement("section");
   group.className = "report-group";
-  const heading = document.createElement("h3");
-  heading.textContent = title;
-  group.append(heading);
+  if (title) {
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    group.append(heading);
+  }
   if (caption) {
     const label = document.createElement("p");
     label.textContent = caption;
