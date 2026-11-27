@@ -955,59 +955,89 @@ function alignSpan(entry, span, box) {
   if (!seen || seen.length < words.length) return false;
   const scale = Number(transform.match(/[\d.]+/)?.[0] || 1);
   const range = document.createRange();
+  // Before each word: its offset in the stand-in font, and how many spaces and
+  // punctuation marks come before it. Quotes, commas and full stops differ most in
+  // width between fonts, so they get a term of their own.
+  const PUNCT = /[‘’“”'".,!?·…:;()\[\]「」『』《》〈〉~-]/g;
   const points = words.map((word) => {
     range.setStart(node, word.index);
     range.setEnd(node, word.index + 1);
+    const before = node.nodeValue.slice(0, word.index);
     return {
       x: (range.getBoundingClientRect().left - rect.left) / scale, // unscaled offset
-      n: (node.nodeValue.slice(0, word.index).match(/\s/g) || []).length,
+      n: (before.match(/\s/g) || []).length,
+      p: (before.match(PUNCT) || []).length,
     };
   });
-  // Model: start = rect.left + shift + c·x + d·spaces. Start from the layer as set,
-  // match each word to the nearest seen start, refit, and repeat.
-  let shift = 0;
-  let c = scale;
-  let d = 0;
-  const predict = (point) => rect.left + shift + c * point.x + d * point.n;
+  // Model: start = rect.left + shift + c·x + d·spaces + e·marks. Start from the layer
+  // as set, match each word to the nearest seen start, refit, and repeat.
+  let model = [0, scale, 0, 0];
+  const predict = (point) => rect.left + model[0] + model[1] * point.x + model[2] * point.n + model[3] * point.p;
   for (let round = 0; round < 4; round += 1) {
     const targets = points.map((point) => {
       const at = predict(point);
       return seen.reduce((best, value) => (Math.abs(value - at) < Math.abs(best - at) ? value : best), seen[0]);
     });
-    // Least squares for shift, c and d (normal equations, 3×3).
-    const rows = points.map((point) => [1, point.x, point.n]);
-    const ata = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-    const atb = [0, 0, 0];
-    rows.forEach((row, k) => {
-      for (let i = 0; i < 3; i += 1) {
-        atb[i] += row[i] * (targets[k] - rect.left);
-        for (let j = 0; j < 3; j += 1) ata[i][j] += row[i] * row[j];
-      }
-    });
-    ata[2][2] += 0.5; // a light pull on the space term keeps two-word lines solvable
-    const solved = solve3(ata, atb);
+    const rows = points.map((point) => [1, point.x, point.n, point.p]);
+    const ata = rows[0].map(() => rows[0].map(() => 0));
+    const atb = rows[0].map(() => 0);
+    rows.forEach((row, k) => row.forEach((value, i) => {
+      atb[i] += value * (targets[k] - rect.left);
+      row.forEach((other, j) => { ata[i][j] += value * other; });
+    }));
+    // A light pull of the space and mark terms towards 0 keeps short lines solvable.
+    ata[2][2] += 0.5;
+    ata[3][3] += 0.5;
+    const solved = solveLinear(ata, atb);
     if (!solved) return false;
-    [shift, c, d] = solved;
+    model = solved;
   }
+  const [shift, c, d, e] = model;
   const fontSize = parseFloat(getComputedStyle(span).fontSize) || rect.height;
   const spacing = d / c;
-  if (!(c > scale * 0.6 && c < scale * 1.6) || Math.abs(spacing) > fontSize || Math.abs(shift) > rect.height * 1.5) return false;
+  if (!(c > scale * 0.6 && c < scale * 1.6) || Math.abs(spacing) > fontSize || Math.abs(shift) > rect.height * 1.5
+    || Math.abs(e / c) > fontSize) return false;
   // Only a consistent correction is trusted: each word must land on a seen start.
   const misfit = points.some((point) => Math.min(...seen.map((value) => Math.abs(value - predict(point)))) > rect.height * 0.3);
   if (misfit) return false;
   span.style.wordSpacing = `${spacing}px`;
   span.style.transform = `translateX(${shift}px) scaleX(${c})`;
+  // CSS has no spacing for marks alone, so each mark gets its own little span with
+  // letter-spacing (the text layer is ReadSeed's own invisible copy, not the page).
+  const markSpacing = e / c;
+  if (Math.abs(markSpacing) > 0.2) {
+    const parts = node.nodeValue.split(/([‘’“”'".,!?·…:;()\[\]「」『』《》〈〉~-])/);
+    const pieces = parts.filter(Boolean).map((part) => {
+      if (part.length !== 1 || !PUNCT.test(part)) return document.createTextNode(part);
+      PUNCT.lastIndex = 0;
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.style.letterSpacing = `${markSpacing}px`;
+      mark.textContent = part;
+      return mark;
+    });
+    PUNCT.lastIndex = 0;
+    span.replaceChildren(...pieces);
+  }
   return true;
 }
 
-// Solves a 3×3 linear system (Cramer's rule); null when it has no single answer.
-function solve3(m, v) {
-  const det = (a) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
-    - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
-    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
-  const base = det(m);
-  if (Math.abs(base) < 1e-9) return null;
-  return [0, 1, 2].map((col) => det(m.map((row, i) => row.map((value, j) => (j === col ? v[i] : value)))) / base);
+// Solves a small linear system by Gaussian elimination; null when it has no single answer.
+function solveLinear(matrix, vector) {
+  const n = vector.length;
+  const m = matrix.map((row, i) => [...row, vector[i]]);
+  for (let col = 0; col < n; col += 1) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row += 1) if (Math.abs(m[row][col]) > Math.abs(m[pivot][col])) pivot = row;
+    if (Math.abs(m[pivot][col]) < 1e-9) return null;
+    [m[col], m[pivot]] = [m[pivot], m[col]];
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = m[row][col] / m[col][col];
+      for (let k = col; k <= n; k += 1) m[row][k] -= factor * m[col][k];
+    }
+  }
+  return m.map((row, i) => row[n] / row[i]);
 }
 
 // A small grey copy of the rendered page, to tell drawn text from clipped text.
@@ -2451,9 +2481,11 @@ function startGuide(ranges = null) {
 // The text layer as lines: spans that share a baseline and touch each other.
 function pdfTextLines() {
   const lines = [];
-  for (const span of pdfPages.querySelectorAll(".textLayer span")) {
-    const node = span.firstChild;
-    if (node?.nodeType !== Node.TEXT_NODE || !node.nodeValue.trim()) continue;
+  for (const span of pdfPages.querySelectorAll(".textLayer span:not(.mark):not(.markedContent)")) {
+    const nodes = [];
+    const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+    for (let next = walker.nextNode(); next; next = walker.nextNode()) nodes.push(next);
+    if (!span.textContent.trim()) continue;
     const rect = span.getBoundingClientRect();
     if (!rect.width || !rect.height) continue;
     const page = span.closest(".readseed-pdf-page");
@@ -2462,14 +2494,14 @@ function pdfTextLines() {
       && Math.abs((item.top + item.bottom) / 2 - (rect.top + rect.bottom) / 2) < Math.min(item.height, height) * 0.5
       && Math.max(item.left, rect.left) - Math.min(item.right, rect.right) < Math.min(item.height, height) * 1.5);
     if (line) {
-      line.spans.push({ node, left: rect.left });
+      line.spans.push({ nodes, left: rect.left });
       line.left = Math.min(line.left, rect.left);
       line.right = Math.max(line.right, rect.right);
       line.top = Math.min(line.top, rect.top);
       line.bottom = Math.max(line.bottom, rect.bottom);
       line.height = Math.max(line.height, height);
     } else {
-      lines.push({ page, spans: [{ node, left: rect.left }], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height });
+      lines.push({ page, spans: [{ nodes, left: rect.left }], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height });
     }
   }
   return lines;
@@ -2508,7 +2540,7 @@ function paragraphAt(x, y) {
   }
   const ranges = [];
   for (const line of block) {
-    for (const { node } of [...line.spans].sort((a, b) => a.left - b.left)) {
+    for (const node of [...line.spans].sort((a, b) => a.left - b.left).flatMap((item) => item.nodes)) {
       for (const match of node.nodeValue.matchAll(/[가-힣A-Za-z0-9]+/g)) {
         const range = document.createRange();
         range.setStart(node, match.index);
