@@ -188,12 +188,28 @@ function maskPersonalInfo(text) {
   return masked;
 }
 
+// Each sentence is analysed once per session: zooming, rotating or turning back to
+// a page lays it out again, and asking the server again made the hints blink off
+// and come back. A sentence still on its way is shared, not asked twice.
+const sentenceResults = new Map();
+function annotateSentence(sentence) {
+  const key = `${settings.useAI ? 1 : 0}\u0000${sentence}`;
+  if (sentenceResults.has(key)) return sentenceResults.get(key);
+  const promise = askSentence(sentence).then((result) => {
+    if (!result.ok) sentenceResults.delete(key); // a failure may pass; ask again next time
+    return result;
+  });
+  sentenceResults.set(key, promise);
+  if (sentenceResults.size > 3000) sentenceResults.delete(sentenceResults.keys().next().value);
+  return promise;
+}
+
 // A busy server answers 429; wait a little and ask again rather than give up.
-async function annotateSentence(sentence, tries = 3) {
+async function askSentence(sentence, tries = 3) {
   const result = await annotateOnce(sentence);
   if (result.ok || tries <= 1 || !/too many/.test(result.error || "")) return result;
   await new Promise((resolve) => setTimeout(resolve, 4000 + Math.random() * 3000));
-  return annotateSentence(sentence, tries - 1);
+  return askSentence(sentence, tries - 1);
 }
 
 async function annotateOnce(sentence) {
@@ -507,13 +523,29 @@ function openText({ title, kind = "", text }) {
     return paragraph;
   }));
   textAssist.setTarget(storyBody, null);
-  const all = splitSentences(text);
+  if (mostlyForeign(text)) {
+    setStatus(FOREIGN_NOTE);
+    return;
+  }
+  const all = splitSentences(text).filter(hasHangul);
   const sentences = all.slice(0, MAX_SENTENCES);
   analyze(textAssist, sentences, text, textCache, () => run === thisRun)
     .then(() => {
       if (run === thisRun && all.length > MAX_SENTENCES) setStatus(`${dockStatus.textContent} · 앞 ${MAX_SENTENCES}문장까지 힌트를 만들었어요`);
     })
     .catch(reportError);
+}
+
+// Hints come from Korean pronunciation rules and a Korean dictionary, so text in
+// English (or another language) gets a plain notice instead of an empty analysis.
+// Sentences with no Hangul at all are skipped in mixed text.
+const FOREIGN_NOTE = "영어로 된 글이라 힌트를 만들 수 없어요. ReadSeed는 지금 한국어 글만 도와줄 수 있어요.";
+const hasHangul = (text) => /[가-힣]/.test(text);
+
+function mostlyForeign(text) {
+  const hangul = (text.match(/[가-힣]/g) || []).length;
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  return latin >= 40 && hangul < (hangul + latin) * 0.2;
 }
 
 // ---------- PDF reading ----------
@@ -681,6 +713,9 @@ function showSpread(number, direction = 0) {
   stopGuide();
   pdfAssist.clearOverlay();
   pdf.current = first;
+  // A new view of the same pages (after zoom or rotation) must also retire the
+  // analysis started for the old one, or both keep redrawing the hints.
+  pdf.view = (pdf.view || 0) + 1;
   const shown = shownPages(first);
   pdfPages.replaceChildren(...shown.map((entry) => entry.element));
   pdfPages.classList.remove("turn-next", "turn-prev");
@@ -718,16 +753,24 @@ function stopGuide() {
 
 async function analyzeSpread(first) {
   const thisRun = run;
-  const isCurrent = () => run === thisRun && pdf.current === first;
+  const view = pdf.view;
+  const isCurrent = () => run === thisRun && pdf.view === view;
   const shown = shownPages(first);
   const layouts = await Promise.all(shown.map((entry) => pageLayout(entry).catch((error) => {
     console.error("[ReadSeed]", error);
     return null;
   })));
+  // The hints are placed on the text layer, so wait for it on every shown page
+  // (after a zoom the pages are new and still being drawn).
+  await Promise.all(shown.map((entry) => ensureTextLayer(entry).catch(() => {})));
   if (!isCurrent()) return;
   shown.forEach(dropClippedSpans);
   const readable = layouts.filter((layout) => layout && !layout.scanned);
-  const sentences = readable.flatMap((layout) => splitSentences(layout.text).slice(0, MAX_PAGE_SENTENCES));
+  if (mostlyForeign(readable.map((layout) => layout.text).join("\n"))) {
+    setStatus(FOREIGN_NOTE);
+    return;
+  }
+  const sentences = readable.flatMap((layout) => splitSentences(layout.text).filter(hasHangul).slice(0, MAX_PAGE_SENTENCES));
   if (!sentences.length) {
     setStatus(layouts.some((layout) => layout?.scanned)
       ? "그림으로 된 쪽(스캔)은 아직 힌트를 볼 수 없어요. 글자가 있는 PDF를 열어 주세요."
