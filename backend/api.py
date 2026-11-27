@@ -78,6 +78,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    # The Chrome extension's toolbar calls the public server from its own origin.
+    allow_origin_regex=r"chrome-extension://[a-p]{32}",
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

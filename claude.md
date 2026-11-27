@@ -139,7 +139,7 @@
 ```
 확장 아이콘 클릭 → background.js가 페이지 상단 도구 막대(toolbar/ iframe) 토글
   → content.js 전체/선택 영역 추출·문장 위치 기록 (기사 본문 선택자 우선, body는 최후 수단)
-  → http://127.0.0.1:8000/annotate (도구 막대에서 요청, 앞 문장부터 점진 렌더링)
+  → https://readseed.online/annotate (도구 막대에서 요청, 앞 문장부터 점진 렌더링. 2026-11-27부터 공개 서버를 부름, 로컬 개발은 toolbar.js의 API_BASE를 바꿈)
   → pipeline.annotate_sentence()
   → assist.js가 힌트 낱말에 실선 밑줄 Overlay, 누르면 카드로 읽는 법·쉬운 뜻 표시(핵심 정보 하이라이트는 2026-11-15 제거)
 ```

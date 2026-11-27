@@ -1,5 +1,8 @@
-const API_URL = "http://127.0.0.1:8000/annotate";
-const HEALTH_URL = "http://127.0.0.1:8000/health";
+// The public ReadSeed server. For local development change it to
+// "http://127.0.0.1:8000" (and add that address to host_permissions in manifest.json).
+const API_BASE = "https://readseed.online";
+const API_URL = `${API_BASE}/annotate`;
+const HEALTH_URL = `${API_BASE}/health`;
 const MAX_SENTENCES = 20;
 const MAX_CONCURRENT_REQUESTS = 2;
 const RENDER_EVERY = 4;
@@ -88,7 +91,7 @@ async function ensureApiAvailable() {
     const response = await fetch(HEALTH_URL, { signal: controller.signal });
     if (!response.ok) throw new Error();
   } catch (_error) {
-    throw new Error("Python API 서버에 연결할 수 없습니다. 서버를 실행한 뒤 다시 시도하세요.");
+    throw new Error("ReadSeed 서버에 연결할 수 없습니다. 인터넷 연결을 확인하고 잠시 뒤 다시 시도해 주세요.");
   } finally { clearTimeout(timeout); }
 }
 

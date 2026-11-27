@@ -6,7 +6,7 @@ Manifest V3 기반 Chrome Extension이다. 확장 아이콘을 누르면 페이�
 
 | 파일 | 역할 |
 |---|---|
-| `manifest.json` | 아이콘 동작, 콘텐츠 스크립트, 로컬 API 호스트 권한, 도구 막대 리소스 정의 |
+| `manifest.json` | 아이콘 동작, 콘텐츠 스크립트, 공개 서버(readseed.online) 호스트 권한, 도구 막대 리소스 정의 |
 | `background.js` | 아이콘 클릭 시 도구 막대 토글, 콘텐츠 스크립트가 없는 탭에는 주입 후 재시도 |
 | `content.js` | 기사 본문·선택 영역 추출, 도구 막대 iframe 열기·닫기·높이 조절 |
 | `assist.js` | 발음·쉬운 뜻·핵심 정보 Overlay 배치, 주석 칸 줄간격, 동시 읽기 |
@@ -21,7 +21,7 @@ Manifest V3 기반 Chrome Extension이다. 확장 아이콘을 누르면 페이�
 ```
 아이콘 클릭 → 상단 도구 막대 → 분석하기
 → 기사 본문(#dic_area 등 본문 전용 선택자 우선, body는 최후 수단) 또는 선택 영역 추출
-→ 문장 분리(최대 20개) → POST http://127.0.0.1:8000/annotate (2개씩 병렬, 앞 문장부터 점진 표시)
+→ 문장 분리(최대 20개) → POST https://readseed.online/annotate (2개씩 병렬, 앞 문장부터 점진 표시)
 → 발음·쉬운 뜻·핵심 정보 Overlay 표시 → 필요시 동시 읽기 시작
 ```
 
@@ -31,7 +31,7 @@ PDF 탭에서 아이콘을 누르면 Chrome 기본 PDF 뷰어 대신 `pdf/viewer
 
 ## 설치·테스트
 
-1. 로컬 API를 실행한다. 자세한 명령은 상위 [README.md](../README.md)를 참고한다.
+1. 확장은 공개 서버 `https://readseed.online`을 부른다(서버를 켠 맥이 켜져 있어야 함). 로컬 서버로 개발할 때는 `toolbar/toolbar.js`의 `API_BASE`와 `manifest.json`의 `host_permissions`를 `http://127.0.0.1:8000`으로 바꾼다.
 2. Chrome `chrome://extensions`에서 개발자 모드를 켠다.
 3. **압축해제된 확장 프로그램 로드**로 이 `frontend/` 폴더를 선택한다.
 4. 일반 웹페이지에서 ReadSeed 아이콘 → 상단 도구 막대의 **분석하기**를 누른다.
