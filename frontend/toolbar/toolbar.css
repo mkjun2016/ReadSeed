@@ -72,6 +72,41 @@ html, body {
 
 .chip { position: relative; cursor: pointer; }
 
+/* 줄 간격: − value + stepper. It changes the analysed text on the page right away. */
+.stepper {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 4px 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-light);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.stepper-label { margin-right: 4px; }
+.stepper output { min-width: 58px; color: var(--brand-strong); text-align: center; }
+.step {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+  font: 700 15px/1 inherit;
+  cursor: pointer;
+}
+.step:hover:not(:disabled) { background: var(--hover); }
+.step:disabled { color: var(--text-lighter); cursor: default; }
+.step:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+
 .chip input {
   position: absolute;
   opacity: 0;

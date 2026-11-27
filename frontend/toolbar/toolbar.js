@@ -13,7 +13,10 @@ const DEFAULT_SETTINGS = {
   selectionOnly: false,
   density: "medium",
   readingSpeed: "normal",
+  lineGap: "wide",
 };
+const LINE_GAPS = ["off", "wide", "wider", "widest"];
+const LINE_GAP_LABELS = { off: "원래대로", wide: "넓게", wider: "더 넓게", widest: "아주 넓게" };
 
 const analyzeButton = document.querySelector("#analyze");
 const clearButton = document.querySelector("#clear");
@@ -146,6 +149,25 @@ function writeSettingsToForm(value) {
     if (input.type === "checkbox") input.checked = Boolean(value[id]);
     else input.value = value[id];
   }
+  showLineGap();
+}
+
+function showLineGap() {
+  const gap = LINE_GAPS.includes(settings.lineGap) ? settings.lineGap : DEFAULT_SETTINGS.lineGap;
+  const index = LINE_GAPS.indexOf(gap);
+  document.querySelector("#lineGapValue").textContent = LINE_GAP_LABELS[gap];
+  document.querySelector("#lineGapDown").disabled = index === 0;
+  document.querySelector("#lineGapUp").disabled = index === LINE_GAPS.length - 1;
+}
+
+// The hidden #lineGap input fires no change event, so the buttons save directly and
+// the page re-renders with the new spacing right away.
+async function stepLineGap(direction) {
+  const index = Math.max(0, LINE_GAPS.indexOf(settings.lineGap));
+  const next = LINE_GAPS[Math.min(LINE_GAPS.length - 1, Math.max(0, index + direction))];
+  document.querySelector("#lineGap").value = next;
+  await saveSettings();
+  showLineGap();
 }
 
 // Hints are always folded into underlines and opened by tapping the word.
@@ -290,6 +312,8 @@ clearButton.addEventListener("click", async () => {
   setStatus("읽기 보조 표시를 지웠습니다.");
 });
 settingsButton.addEventListener("click", () => toggleSettings().catch(reportError));
+document.querySelector("#lineGapDown").addEventListener("click", () => stepLineGap(-1).catch(reportError));
+document.querySelector("#lineGapUp").addEventListener("click", () => stepLineGap(1).catch(reportError));
 document.querySelector("#closeToolbar").addEventListener("click", () => sendToHost({ type: "READSEED_CLOSE_TOOLBAR" }, true));
 document.querySelector(".evaluation-panel").addEventListener("toggle", () => syncToolbarHeight());
 document.querySelector("#evaluationStart").addEventListener("click", () => startEvaluation().catch(reportError));

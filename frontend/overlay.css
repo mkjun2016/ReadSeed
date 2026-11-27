@@ -76,6 +76,12 @@
 .readseed-annotation-space.readseed-size-small { --readseed-lane: 18px; }
 .readseed-annotation-space.readseed-size-large { --readseed-lane: 23px; }
 
+/* Reading line spacing chosen in the toolbar (줄 간격), on analysed blocks only. */
+.readseed-reading-space.readseed-gap-wide { line-height: 1.9 !important; }
+.readseed-reading-space.readseed-gap-wider { line-height: 2.3 !important; }
+.readseed-reading-space.readseed-gap-widest { line-height: 2.7 !important; }
+
+.readseed-reading-space :is(span, a, b, strong, i, em, u, mark, font, small, sup, sub),
 .readseed-annotation-space :is(span, a, b, strong, i, em, u, mark, font, small, sup, sub) {
   line-height: inherit !important;
 }

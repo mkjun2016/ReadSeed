@@ -22,6 +22,14 @@
         <label class="chip"><input id="selectionOnly" type="checkbox" /><span>선택 영역만</span></label>
       </div>
 
+      <div class="stepper" role="group" aria-label="줄 간격">
+        <span class="stepper-label">줄 간격</span>
+        <button id="lineGapDown" class="step" type="button" aria-label="줄 간격 좁히기">−</button>
+        <output id="lineGapValue" aria-live="polite">넓게</output>
+        <button id="lineGapUp" class="step" type="button" aria-label="줄 간격 넓히기">+</button>
+        <input id="lineGap" type="hidden" value="wide" />
+      </div>
+
       <p id="status" role="status"></p>
 
       <div class="actions">

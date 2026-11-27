@@ -16,7 +16,12 @@
   const DEFAULT_SETTINGS = {
     pronunciation: true, gloss: true, readingGuide: false,
     annotationSize: "medium", density: "medium", readingSpeed: "normal", reveal: "always",
+    lineGap: "off",
   };
+  // Wider line spacing on analysed blocks so a reader with dyslexia keeps their line.
+  // Like the label lanes it is only a removable class; the text itself is untouched.
+  const GAP_CLASS = "readseed-reading-space";
+  const LINE_GAPS = ["off", "wide", "wider", "widest"];
   const GLOSS_MAX_LENGTH = 24;
   const LANE_GAP = 6;
 
@@ -177,6 +182,13 @@
       block.classList.add(...laneClasses());
     }
 
+    function spaceForReading(block) {
+      const gap = state.settings.lineGap;
+      if (!block || fixedLayout || !LINE_GAPS.includes(gap) || gap === "off") return;
+      if (!state.spacedElements.has(block)) state.spacedElements.set(block, block.getAttribute("class"));
+      block.classList.add(GAP_CLASS, `readseed-gap-${gap}`);
+    }
+
     function createLabel(kind, text, range, word) {
       const block = annotationBlock(range);
       if (!block) return false;
@@ -263,6 +275,8 @@
       state.root = layer;
 
       const located = locateWords(flattenWords(results), nodes, text);
+      // Every analysed block gets the chosen line spacing, not only blocks with a hint.
+      located.forEach(({ range }) => spaceForReading(annotationBlock(range)));
       located.forEach(({ word, range }, index) => {
         if (!densityAllows(index, state.settings.density)) return;
         if (state.settings.pronunciation && word.다름 && word.신뢰 && word.발음) {
@@ -617,5 +631,5 @@
     return { show, hide, contains: (node) => node === host || host.contains(node), remove: () => host.remove() };
   }
 
-  globalThis.ReadSeedAssist = { create, createHintCard, normalizeText, EXCLUDED_SELECTORS, BLOCK_SELECTOR, DEFAULT_SETTINGS };
+  globalThis.ReadSeedAssist = { create, createHintCard, normalizeText, EXCLUDED_SELECTORS, BLOCK_SELECTOR, DEFAULT_SETTINGS, LINE_GAPS };
 })();
