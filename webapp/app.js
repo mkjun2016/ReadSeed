@@ -1793,7 +1793,9 @@ const MAX_RETRIES = 2;
 let study = null;
 
 function startStudy(entries, from = "report") {
-  study = { from, entries, queue: entries.map((entry) => ({ entry, tries: 0 })), total: entries.length, done: 0, firstTry: new Set(), again: new Set(), revealed: false };
+  study = { from, entries, queue: entries.map((entry) => ({ entry, tries: 0 })), total: entries.length, done: 0, firstTry: new Set(), again: new Set(), revealed: false,
+    // Stars before this session, to show at the end how each word moved.
+    before: new Map(entries.map((entry) => [entry.surface, notebookEntry(entry.surface)?.streak || 0])) };
   $("#report-title").textContent = from === "notebook" ? "낱말 복습" : "낱말 공부";
   renderStudy();
 }
@@ -1867,6 +1869,7 @@ function nextStudyCard(knewIt) {
   renderStudy();
 }
 
+// The end of a study session: each word with its stars, and what changed today.
 function renderStudyEnd() {
   const body = $("#report-body");
   const firstTry = study.firstTry.size;
@@ -1876,30 +1879,39 @@ function renderStudyEnd() {
     sessions[sessions.length - 1].readAloneFirstTry = firstTry;
     writeStorage(SESSIONS_KEY, JSON.stringify(sessions));
   }
-  const message = element("p", "report-number", "처음부터 혼자 읽은 낱말 ", element("b", "", String(firstTry)), `개 / ${study.total}개`);
-  const parts = [element("p", "study-cheer", firstTry === study.total ? "모두 혼자 읽었어요. 정말 잘했어요!" : "끝까지 공부했어요. 잘했어요!"), message];
-  const learned = study.entries.filter((entry) => notebookEntry(entry.surface)?.learned && study.firstTry.has(entry.surface));
-  if (learned.length) {
-    parts.push(reportGroup("다 익힌 낱말", `${LEARNED_STREAK}번 다른 날에 혼자 읽었어요`, learned.map((entry) => entry.surface), "learned"));
-  }
+  const cheer = firstTry === study.total ? "모두 혼자 읽었어요. 정말 잘했어요!" : "끝까지 공부했어요. 잘했어요!";
+  const rows = study.entries.map((entry) => {
+    const word = notebookEntry(entry.surface);
+    const before = study.before.get(entry.surface) || 0;
+    const after = word?.streak || 0;
+    const stars = element("span", "notebook-stars");
+    for (let index = 0; index < LEARNED_STREAK; index += 1) {
+      const star = element("span", index < after ? (index >= before ? "star new" : "star") : "star empty", index < after ? "★" : "☆");
+      stars.append(star);
+    }
+    stars.setAttribute("aria-label", `${LEARNED_STREAK}개 중 ${after}개`);
+    const change = word?.learned && after > before ? "다 익혔어요!"
+      : after > before ? "별 하나 더!"
+      : study.again.has(entry.surface) ? (before ? "별이 처음부터 다시 시작해요" : "다음에 다시 만나요")
+      : "오늘은 이미 별을 받았어요";
+    const tone = word?.learned && after > before ? "learned" : after > before ? "up" : study.again.has(entry.surface) ? "down" : "";
+    return element("li", `star-row ${tone}`, element("span", "star-word", entry.surface), stars, element("span", "star-change", change));
+  });
+  const list = element("ul", "star-list", ...rows);
+  const parts = [element("p", "study-cheer", cheer), list,
+    element("p", "report-note", `다른 날 혼자 맞게 읽을 때마다 별이 하나씩 쌓이고, ${LEARNED_STREAK}개가 되면 다 익힌 낱말이에요.`)];
   const again = study.entries.filter((entry) => study.again.has(entry.surface));
-  const back = study.from === "notebook" ? "공책 보기" : "결과 보기";
-  if (again.length) {
-    parts.push(reportGroup("다음에 한 번 더 볼 낱말", "낱말 공책에 남겨 둘게요", again.map((entry) => entry.pronunciation ? `${entry.surface} [${entry.pronunciation}]` : entry.surface), ""));
-    parts.push(element("div", "study-actions",
-      button(back, "study-choice", leaveStudy),
-      button("이 낱말만 다시", "study-choice good", () => startStudy(again, study.from))));
-  } else {
-    parts.push(button(back, "primary-button wide", leaveStudy));
-  }
+  parts.push(element("div", "study-actions",
+    ...(again.length ? [button("이 낱말만 다시", "study-choice", () => startStudy(again, study.from))] : []),
+    button("홈으로", "study-choice good", goHome)));
   body.replaceChildren(...parts);
 }
 
-function leaveStudy() {
-  const from = study?.from;
+function goHome() {
+  $("#report").close();
   stopStudy();
-  if (from === "notebook") renderNotebook();
-  else renderReport();
+  if (mode) leaveReader();
+  updateNotebookTile();
 }
 
 // ---------- Word notebook ----------

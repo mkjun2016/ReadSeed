@@ -1053,3 +1053,17 @@ body[data-test="on"] .tip-demo { text-decoration: none; }
    background do not apply there: hide that group while a PDF is open. */
 body[data-mode="pdf"] #set-text,
 body[data-mode="pdf"] .sheet-tabs a[href="#set-text"] { display: none; }
+/* End of word study: each word with its stars and what changed today. */
+.star-list { display: grid; gap: 8px; margin: 14px 0 6px; padding: 0; list-style: none; }
+.star-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "word stars" "change change"; gap: 2px 12px; align-items: center; padding: 12px 16px; border-radius: 14px; background: var(--surface-2, oklch(0.97 0.005 90)); }
+.star-word { grid-area: word; font-size: 20px; font-weight: 700; }
+.star-row .notebook-stars { grid-area: stars; font-size: 22px; letter-spacing: 2px; }
+.star { color: oklch(0.78 0.15 85); }
+.star.empty { color: var(--ink-faint); }
+.star.new { color: oklch(0.72 0.17 70); animation: star-pop 0.5s ease-out both; }
+@keyframes star-pop { 0% { transform: scale(0.3); opacity: 0; } 70% { transform: scale(1.3); } 100% { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .star.new { animation: none; } }
+.star { display: inline-block; }
+.star-change { grid-area: change; font-size: 14px; color: var(--ink-soft); }
+.star-row.up .star-change, .star-row.learned .star-change { color: var(--brand-strong); font-weight: 700; }
+.star-row.learned { background: var(--brand-tint); }
