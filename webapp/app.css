@@ -607,6 +607,10 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
 .dock-button:active { filter: brightness(0.94); }
 .dock-button:disabled { opacity: 0.4; }
 .zoom { display: flex; align-items: center; gap: 4px; }
+/* PDF: the page slider takes the free width of the dock, so a long book is quick to move through. */
+body[data-mode="pdf"] .zoom { flex: 1; min-width: 0; }
+body[data-mode="pdf"] .legend { display: none; }
+.pdf-slider { flex: 1; min-width: 120px; height: 44px; margin: 0 14px 0 4px; accent-color: var(--brand); cursor: pointer; }
 .zoom .dock-button { justify-content: center; min-width: 52px; padding: 0; font-size: 22px; }
 .zoom span { min-width: 52px; text-align: center; font-weight: 700; color: var(--ink-soft); }
 @media (max-width: 900px) {

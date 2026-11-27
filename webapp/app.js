@@ -737,8 +737,16 @@ function showSpread(number, direction = 0) {
     else releaseCanvas(entry);
   });
   const last = shown[shown.length - 1].number;
-  $("#pdf-page-info").textContent = first === last ? `${first} / ${pdf.pages.length}쪽` : `${first}–${last} / ${pdf.pages.length}쪽`;
+  $("#pdf-page-info").textContent = pageLabel(first, last);
+  const slider = $("#pdf-slider");
+  slider.max = String(pdf.pages.length);
+  slider.value = String(first);
+  slider.hidden = pdf.pages.length <= pdf.perScreen;
   analyzeSpread(first).catch(reportError);
+}
+
+function pageLabel(first, last) {
+  return first === last ? `${first} / ${pdf.pages.length}쪽` : `${first}–${last} / ${pdf.pages.length}쪽`;
 }
 
 function turnPage(direction) {
@@ -2455,6 +2463,16 @@ pdfPages.addEventListener("touchend", (event) => {
   if (scrolled || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
   turnPage(dx < 0 ? 1 : -1);
 }, { passive: true });
+// Dragging the slider shows where it will land; letting go opens that spread.
+$("#pdf-slider").addEventListener("input", (event) => {
+  if (!pdf.pages.length) return;
+  const first = spreadStart(Number(event.target.value));
+  $("#pdf-page-info").textContent = pageLabel(first, Math.min(first + pdf.perScreen - 1, pdf.pages.length));
+});
+$("#pdf-slider").addEventListener("change", (event) => {
+  const target = spreadStart(Number(event.target.value));
+  if (target !== pdf.current) showSpread(target, target > pdf.current ? 1 : -1);
+});
 $("#zoom-in").addEventListener("click", () => changeZoom(1).catch(reportError));
 $("#zoom-out").addEventListener("click", () => changeZoom(-1).catch(reportError));
 $("#hint-more").addEventListener("click", () => {
