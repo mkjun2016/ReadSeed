@@ -60,23 +60,6 @@
           </select>
         </label>
       </div>
-
-      <details class="evaluation-panel">
-        <summary>실사용 평가 기록</summary>
-        <div class="evaluation">
-          <label class="field">조건
-            <select id="evaluationCondition"><option value="baseline">보조 기능 없이</option><option value="readseed">ReadSeed 사용</option></select>
-          </label>
-          <label class="field">정답 수<input id="scoreCorrect" type="number" min="0" value="0" /></label>
-          <label class="field">문항 수<input id="scoreTotal" type="number" min="0" value="0" /></label>
-          <div class="evaluation-actions">
-            <button id="evaluationStart" class="ghost" type="button">측정 시작</button>
-            <button id="evaluationFinish" class="ghost" type="button">측정 완료</button>
-            <button id="evaluationExport" class="ghost" type="button">결과 내보내기</button>
-          </div>
-          <p id="evaluationSummary"></p>
-        </div>
-      </details>
     </section>
     <script src="toolbar.js"></script>
   </body>

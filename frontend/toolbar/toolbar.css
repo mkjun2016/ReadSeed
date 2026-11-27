@@ -203,7 +203,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 
 .settings[hidden] { display: none; }
 
-.fields, .evaluation {
+.fields {
   display: flex;
   flex-wrap: wrap;
   align-items: end;
@@ -228,19 +228,6 @@ select, input[type="number"] {
   color: var(--text);
   font: inherit;
 }
-
-.evaluation-panel summary {
-  width: fit-content;
-  color: var(--text-light);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.evaluation { margin-top: 10px; }
-.evaluation-actions { display: flex; gap: 4px; }
-.evaluation-actions .ghost { background: var(--surface); border: 1px solid var(--border); }
-#evaluationSummary { flex-basis: 100%; margin: 0; color: var(--text-lighter); font-size: 11px; }
 
 .sr-only {
   position: absolute;

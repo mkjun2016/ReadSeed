@@ -5,7 +5,6 @@ const MAX_CONCURRENT_REQUESTS = 2;
 const RENDER_EVERY = 4;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SETTINGS_KEY = "readseedSettings";
-const EVALUATION_KEY = "readseedEvaluation";
 const DEFAULT_SETTINGS = {
   pronunciation: true,
   gloss: true,
@@ -25,7 +24,6 @@ const settingsPanel = document.querySelector("#settings");
 const settingsButton = document.querySelector("#toggleSettings");
 const settingIds = Object.keys(DEFAULT_SETTINGS);
 let settings = { ...DEFAULT_SETTINGS };
-let lastAnalysisSummary = null;
 let hostTab = null;
 
 function setStatus(message) {
@@ -190,7 +188,6 @@ async function loadSettings() {
 async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
   analyzeButton.disabled = true;
   setStatus(selectionOnly ? "선택 영역을 확인하고 있습니다…" : "본문을 확인하고 있습니다…");
-  const startedAt = performance.now();
   try {
     await sendToHost({ type: "READSEED_CLEAR_OVERLAY" }, true);
     await ensureApiAvailable();
@@ -211,15 +208,6 @@ async function analyze({ selectionOnly = settings.selectionOnly } = {}) {
     const overlay = await sendToHost({ type: "READSEED_RENDER_ASSISTANCE", results, settings: hintSettings() });
     if (!overlay?.ok) throw new Error(overlay?.error || "읽기 보조 정보를 표시하지 못했습니다.");
 
-    lastAnalysisSummary = {
-      analyzedAt: new Date().toISOString(),
-      durationMs: Math.round(performance.now() - startedAt),
-      sentences: sentences.length,
-      failed,
-      pronunciation: overlay.pronunciation,
-      gloss: overlay.gloss,
-      selectionOnly,
-    };
     const capped = allSentences.length > MAX_SENTENCES ? ` 앞 ${MAX_SENTENCES}문장만 처리했습니다.` : "";
     setStatus(`읽는 법 ${overlay.pronunciation} · 쉬운 뜻 ${overlay.gloss} — 밑줄 친 낱말을 누르세요${failed ? ` · ${failed}문장 실패` : ""}.${capped}`);
   } finally {
@@ -238,73 +226,13 @@ async function toggleSettings() {
   await syncToolbarHeight();
 }
 
-async function loadEvaluation() {
-  const stored = await chrome.storage.local.get(EVALUATION_KEY);
-  const evaluation = stored[EVALUATION_KEY] || { active: null, sessions: [] };
-  renderEvaluationSummary(evaluation);
-  return evaluation;
-}
-
-function renderEvaluationSummary(evaluation) {
-  const summary = document.querySelector("#evaluationSummary");
-  if (evaluation.active) {
-    const seconds = Math.max(0, Math.round((Date.now() - evaluation.active.startedAt) / 1000));
-    summary.textContent = `측정 중 · ${evaluation.active.condition === "readseed" ? "ReadSeed 사용" : "보조 기능 없이"} · ${seconds}초 경과`;
-  } else summary.textContent = `저장된 평가 ${evaluation.sessions.length}건 · 이 기기에만 저장됩니다.`;
-}
-
-async function startEvaluation() {
-  const evaluation = await loadEvaluation();
-  evaluation.active = {
-    startedAt: Date.now(),
-    condition: document.querySelector("#evaluationCondition").value,
-    settings: { ...settings },
-  };
-  await chrome.storage.local.set({ [EVALUATION_KEY]: evaluation });
-  renderEvaluationSummary(evaluation);
-}
-
-async function finishEvaluation() {
-  const evaluation = await loadEvaluation();
-  if (!evaluation.active) throw new Error("먼저 측정을 시작해 주세요.");
-  const correct = Number(document.querySelector("#scoreCorrect").value || 0);
-  const total = Number(document.querySelector("#scoreTotal").value || 0);
-  if (correct < 0 || total < 0 || correct > total) throw new Error("이해도 점수를 확인해 주세요.");
-  evaluation.sessions.push({
-    condition: evaluation.active.condition,
-    startedAt: new Date(evaluation.active.startedAt).toISOString(),
-    finishedAt: new Date().toISOString(),
-    durationSeconds: Math.round((Date.now() - evaluation.active.startedAt) / 1000),
-    comprehension: { correct, total, rate: total ? correct / total : null },
-    settings: evaluation.active.settings,
-    analysis: lastAnalysisSummary,
-  });
-  evaluation.sessions = evaluation.sessions.slice(-100);
-  evaluation.active = null;
-  await chrome.storage.local.set({ [EVALUATION_KEY]: evaluation });
-  renderEvaluationSummary(evaluation);
-  setStatus("평가 기록을 저장했습니다.");
-}
-
-async function exportEvaluation() {
-  const evaluation = await loadEvaluation();
-  if (!evaluation.sessions.length) throw new Error("내보낼 평가 기록이 없습니다.");
-  const blob = new Blob([JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(), sessions: evaluation.sessions }, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `readseed-usability-${new Date().toISOString().slice(0, 10)}.json`;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 function reportError(error) {
   setStatus(error.message);
   console.error("[ReadSeed]", error);
 }
 
 document.querySelectorAll("input, select").forEach((input) => {
-  if (!input.closest(".evaluation")) input.addEventListener("change", () => saveSettings().catch(reportError));
+  input.addEventListener("change", () => saveSettings().catch(reportError));
 });
 analyzeButton.addEventListener("click", () => analyze().catch(reportError));
 clearButton.addEventListener("click", async () => {
@@ -315,14 +243,10 @@ settingsButton.addEventListener("click", () => toggleSettings().catch(reportErro
 document.querySelector("#lineGapDown").addEventListener("click", () => stepLineGap(-1).catch(reportError));
 document.querySelector("#lineGapUp").addEventListener("click", () => stepLineGap(1).catch(reportError));
 document.querySelector("#closeToolbar").addEventListener("click", () => sendToHost({ type: "READSEED_CLOSE_TOOLBAR" }, true));
-document.querySelector(".evaluation-panel").addEventListener("toggle", () => syncToolbarHeight());
-document.querySelector("#evaluationStart").addEventListener("click", () => startEvaluation().catch(reportError));
-document.querySelector("#evaluationFinish").addEventListener("click", () => finishEvaluation().catch(reportError));
-document.querySelector("#evaluationExport").addEventListener("click", () => exportEvaluation().catch(reportError));
 
 (async () => {
   try {
-    await Promise.all([loadSettings(), loadEvaluation()]);
+    await loadSettings();
     setStatus("본문을 분석하거나 드래그한 부분만 분석할 수 있습니다.");
   } catch (error) {
     reportError(error);
