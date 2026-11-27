@@ -1026,7 +1026,6 @@ body[data-test="on"] .legend-item { display: none; }
 body[data-test="on"] .legend-item.test-only { display: inline-flex; }
 /* The daily test hides every underline: the child reads alone and taps only when stuck. */
 body[data-test="on"] #readseed-overlay .readseed-marker { display: none !important; }
-.hint-sound .write-as { display: block; margin-top: 6px; font-size: 14px; font-weight: 600; color: var(--ink-soft); }
 .daily-score { margin: 0; font-size: 20px; font-weight: 800; }
 .daily-score b { color: var(--sound); font-size: 28px; }
 .daily-words { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }

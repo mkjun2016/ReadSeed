@@ -65,9 +65,10 @@ const FONT_SIZES = { 1: 16, 2: 20, 3: 24, 4: 28 };
 const LINE_GAPS = { normal: 1.9, wide: 2.3, wider: 2.7 };
 const TRACKING = { normal: "0.01em", wide: "0.08em" };
 const MAX_SENTENCES = 40;
-const MAX_CONCURRENT_REQUESTS = 2;
+const MAX_PAGE_SENTENCES = 120; // a dense PDF page (a newspaper) has far more than 40
+const MAX_CONCURRENT_REQUESTS = 3;
 const RENDER_EVERY = 3;
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2];
 // Wide enough for a landscape 13-inch iPad; desktop windows stop here.
 const MAX_PAGE_WIDTH = 1400;
@@ -187,7 +188,15 @@ function maskPersonalInfo(text) {
   return masked;
 }
 
-async function annotateSentence(sentence) {
+// A busy server answers 429; wait a little and ask again rather than give up.
+async function annotateSentence(sentence, tries = 3) {
+  const result = await annotateOnce(sentence);
+  if (result.ok || tries <= 1 || !/too many/.test(result.error || "")) return result;
+  await new Promise((resolve) => setTimeout(resolve, 4000 + Math.random() * 3000));
+  return annotateSentence(sentence, tries - 1);
+}
+
+async function annotateOnce(sentence) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -208,13 +217,16 @@ async function annotateSentence(sentence) {
 
 // Words are matched to the text in order, so only a contiguous prefix of results
 // is rendered while the rest are still on their way.
-async function annotateAll(sentences, onPrefix) {
+// Stops taking new sentences once the reader has moved on (`isCurrent`), so turning
+// pages never piles up requests for pages no longer shown. Sentences that failed
+// for a passing reason (busy server, slow network) are asked once more at the end.
+async function annotateAll(sentences, onPrefix, isCurrent = () => true) {
   const results = new Array(sentences.length);
   let next = 0;
   let prefix = 0;
   let rendered = 0;
   async function worker() {
-    while (next < sentences.length) {
+    while (next < sentences.length && isCurrent()) {
       const index = next++;
       results[index] = await annotateSentence(sentences[index]);
       while (prefix < results.length && results[prefix]) prefix += 1;
@@ -224,7 +236,20 @@ async function annotateAll(sentences, onPrefix) {
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_REQUESTS, sentences.length) }, worker));
+  const workers = () => Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_REQUESTS, sentences.length) }, worker));
+  await workers();
+  const retry = results.flatMap((result, index) => (result && !result.ok && !/longer than/.test(result.error || "") ? [index] : []));
+  if (retry.length && isCurrent()) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    let at = 0;
+    const again = async () => {
+      while (at < retry.length && isCurrent()) {
+        const index = retry[at++];
+        results[index] = await annotateSentence(sentences[index]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, retry.length) }, again));
+  }
   return results;
 }
 
@@ -395,7 +420,8 @@ async function analyze(assist, sentences, cacheKey, cache, isCurrent, unsure = [
       if (!isCurrent()) return;
       setStatus(`힌트를 준비하고 있어요… ${partial.length}/${sentences.length}`);
       assist.renderAssistance(withState(mark(partial)), assistSettings());
-    });
+    }, isCurrent);
+    if (!isCurrent()) return; // moved on: this list is unfinished, so it is not kept
     if (results.some((result) => result.ok)) cache.set(cacheKey, results);
     queueReviews(results);
   }
@@ -701,7 +727,7 @@ async function analyzeSpread(first) {
   if (!isCurrent()) return;
   shown.forEach(dropClippedSpans);
   const readable = layouts.filter((layout) => layout && !layout.scanned);
-  const sentences = readable.flatMap((layout) => splitSentences(layout.text).slice(0, MAX_SENTENCES));
+  const sentences = readable.flatMap((layout) => splitSentences(layout.text).slice(0, MAX_PAGE_SENTENCES));
   if (!sentences.length) {
     setStatus(layouts.some((layout) => layout?.scanned)
       ? "그림으로 된 쪽(스캔)은 아직 힌트를 볼 수 없어요. 글자가 있는 PDF를 열어 주세요."
@@ -1308,10 +1334,7 @@ function showCard(info) {
   if (info.pronunciation) {
     const caption = document.createElement("small");
     caption.textContent = "이렇게 읽어요";
-    // Seeing only [가치] can turn into writing 가치 (expert advice), so the card
-    // always says the spelling stays as written.
-    const writeAs = element("small", "write-as", `쓸 때는 글자 그대로 ‘${info.surface}’`);
-    sound.replaceChildren(caption, `[${info.pronunciation}]`, writeAs);
+    sound.replaceChildren(caption, `[${info.pronunciation}]`);
   } else if (info.plain) {
     sound.replaceChildren(element("small", "", "쓰인 대로 읽어요"), `[${info.surface}]`);
   }
@@ -1322,7 +1345,7 @@ function showCard(info) {
   $("#hint-more").hidden = !meaning || !info.pronunciation;
 
   const basis = $("#hint-basis");
-  basis.textContent = basisText(info, candidate);
+  basis.textContent = basisText(info);
   basis.hidden = !basis.textContent;
   card.dataset.surface = info.surface;
   $(".hint-links").hidden = Boolean(info.plain); // nothing to explain or report for a word read as written
@@ -1372,14 +1395,10 @@ function countTipTap() {
   $("#reader-tip").hidden = true;
 }
 
-// Where the hint comes from, in plain words for a teacher or parent reading along.
-function basisText(info, candidate) {
-  const parts = [];
-  const sound = info.word?.근거?.발음;
-  if (info.pronunciation && sound?.출처) parts.push(`읽는 법: ${sound.출처} ‘${sound.표제어}’`);
-  else if (info.pronunciation && sound?.표준발음법?.length) parts.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-  const why = info.word?.맞춤 === "struggle" ? ` · 자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
-  return parts.length ? `근거 — ${parts.join(" / ")}${why}` : "";
+// The card shows no source line (2026-11-27); the "how was this decided" log keeps
+// it. Only the reason a hint is shown on purpose for this child is said here.
+function basisText(info) {
+  return info.word?.맞춤 === "struggle" ? `자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
 }
 
 function loadReports() {
@@ -1588,7 +1607,7 @@ async function startDaily() {
     const passage = await fetchDaily(plan);
     dailyTest = { rule: plan.rule, targets: passage.targets || [], plain: new Set(), result: null, trace: passage.trace || [] };
     document.body.dataset.test = "on";
-    openText({ title: passage.title, kind: `오늘의 읽기 · ${plan.rule}${passage.source === "ai" ? " · AI가 쓰고 규칙으로 확인한 글" : ""}`, text: passage.text });
+    openText({ title: passage.title, kind: `오늘의 읽기 · ${plan.rule}`, text: passage.text });
     $("#reader-tip").hidden = false;
     $("#reader-tip p").textContent = "오늘은 밑줄이 없어요. 소리 내어 혼자 읽어 보고, 막히는 낱말만 톡 눌러요. 다 읽으면 ‘다 읽었어요’.";
   } catch (error) {

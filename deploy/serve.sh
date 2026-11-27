@@ -2,7 +2,7 @@
 # ReadSeed를 공개 주소로 켠다. 이 창을 닫거나 Ctrl+C를 누르면 서버와 터널이 함께 꺼진다.
 # 켜져 있는 동안 맥이 잠들지 않게 한다(덮개를 닫으면 꺼지니 열어 둔다).
 #   ./deploy/serve.sh
-# 바꿀 수 있는 값(환경 변수): AI_DAILY_LIMIT(기본 500), RATE_LIMIT_PER_MINUTE(기본 240), READSEED_PORT(기본 8787)
+# 바꿀 수 있는 값(환경 변수): AI_DAILY_LIMIT(기본 500), RATE_LIMIT_PER_MINUTE(기본 1200), READSEED_PORT(기본 8787)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$ROOT/deploy"
@@ -12,7 +12,7 @@ PORT="${READSEED_PORT:-8787}"
 
 export PUBLIC_MODE=1
 export ALLOWED_ORIGINS="https://$HOST"
-export RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-240}"
+export RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-1200}"
 export AI_DAILY_LIMIT="${AI_DAILY_LIMIT:-500}"
 
 cd "$ROOT/backend"

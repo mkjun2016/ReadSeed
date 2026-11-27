@@ -148,7 +148,7 @@ def _store_selection(key: str, selection: Selection) -> None:
 
 def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict], surface: str = "") -> str:
     payload = {
-        "version": "gloss-selector-v9",
+        "version": "gloss-selector-v10",
         "surface": surface,
         "model": os.getenv("GLOSS_LLM_MODEL"),
         "sentence": sentence,
@@ -251,8 +251,10 @@ def _request_llm(sentence: str, word: str, pos: str, candidates: list[dict]) -> 
 # 사전 정보(난이도·분야·품사)를 조회한 뒤 submit_decisions로만 답한다.
 EASY_RULE = (
     "고른 사전 뜻만 근거로, 초등 3~4학년이 아는 쉬운 낱말로 다시 쓴 풀이 한 줄(40자 안팎). "
-    "명사에 조사가 붙어 있으면(surface) 그 조사를 살려 문장에 바로 넣을 수 있게 쓴다(바닷가에 → 바다와 땅이 만나는 곳에). "
-    "그 밖에는 ‘~하는 것’, ‘~한 상태’, ‘~하다’처럼 문법이 맞는 풀이로 끝낸다(해지 → 맺은 약속을 없던 일로 하는 것). "
+    "문장 속 꼴(surface)을 그대로 살려, 그 낱말 자리에 바꿔 넣어도 문장이 자연스럽게 이어지게 쓴다. "
+    "명사는 붙은 조사를 살리고(바닷가에 → 바다와 땅이 만나는 곳에), 동사·형용사는 문장 속 어미를 살린다"
+    "(떠오르자 → 위로 올라가자, 확장하고 → 더 크고 넓게 하고, 둥근 → 동그란). 기본형(~다)으로 끝내지 않는다. "
+    "조사 없이 홀로 쓰인 명사만 ‘~하는 것’처럼 끝낸다(해지 → 맺은 약속을 없던 일로 하는 것). "
     "사전에 없는 사실을 더하지 않고, 풀이에 어려운 한자어를 다시 쓰지 않는다."
 )
 TOOLS = [

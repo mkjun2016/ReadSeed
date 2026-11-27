@@ -653,7 +653,6 @@
     .box span { display: block; }
     .sound { background: oklch(0.955 0.03 280); color: oklch(0.45 0.21 280); font-size: 24px; font-weight: 800; }
     .meaning { background: oklch(0.955 0.035 175); color: oklch(0.40 0.10 175); font-size: 16px; font-weight: 600; }
-    .basis { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); color: rgba(0,0,0,.5); font-size: 12.5px; }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     @media (prefers-reduced-motion: reduce) { .card { animation: none; } }`;
 
@@ -703,11 +702,6 @@
           el("span", "", (gloss.쉬운말 || gloss.뜻풀이).replace(/\s+/g, " ").trim()),
         ])));
       }
-      const basis = [];
-      const sound = info.word?.근거?.발음;
-      if (info.pronunciation && sound?.출처) basis.push(`읽는 법: ${sound.출처}`);
-      else if (info.pronunciation && sound?.표준발음법?.length) basis.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-      if (basis.length) children.push(el("p", "basis", `근거 — ${basis.join(" / ")}`));
       card.replaceChildren(...children);
       card.hidden = false;
 

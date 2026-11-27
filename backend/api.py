@@ -28,7 +28,7 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 # 공개 주소(Cloudflare Tunnel)로 열 때 켠다. 로컬 개발에서는 모두 꺼져 있다.
 #   PUBLIC_MODE=1                       API 문서(/docs) 숨김
 #   ALLOWED_ORIGINS=https://a.example   브라우저에서 부를 수 있는 출처(쉼표로 여러 개). 비우면 *
-#   RATE_LIMIT_PER_MINUTE=240           주소(IP)마다 1분에 받을 분석 요청 수. 0이면 제한 없음
+#   RATE_LIMIT_PER_MINUTE=1200          주소(IP)마다 1분에 받을 분석 요청 수. 0이면 제한 없음
 PUBLIC_MODE = os.getenv("PUBLIC_MODE") == "1"
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()] or ["*"]
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "0") or 0)
