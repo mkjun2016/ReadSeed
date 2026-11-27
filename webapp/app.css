@@ -19,6 +19,7 @@
   --brand-tint: oklch(0.52 0.12 155 / 0.12);
   --sound: oklch(0.45 0.21 280);
   --sound-tint: oklch(0.955 0.03 280);
+  --hint-line-width: 1.5px;
   --sound-line: oklch(0.554 0.214 280 / 0.7);
   --meaning: oklch(0.40 0.10 175);
   --meaning-tint: oklch(0.955 0.035 175);
@@ -167,7 +168,7 @@ body[data-view="home"] #home-button { display: none; }
   margin: 0 2px;
   padding: 0 6px 2px;
   border: 0;
-  border-bottom: 4px solid var(--sound);
+  border-bottom: var(--hint-line-width) solid var(--sound);
   border-radius: 8px 8px 0 0;
   background: var(--sound-tint);
   color: var(--ink);
@@ -448,7 +449,7 @@ body[data-view="home"] #home-button { display: none; }
 body[data-mode="pdf"] .reader-tip { max-width: none; margin: 12px var(--gutter) 0; }
 .reader-tip p { flex: 1; margin: 0; line-height: 1.5; }
 .reader-tip b { color: var(--sound); }
-.tip-demo { flex: none; padding: 2px 8px; border-radius: 8px; background: var(--surface); font-size: 18px; font-weight: 800; text-decoration: underline 3px solid var(--sound-line); text-underline-offset: 5px; }
+.tip-demo { flex: none; padding: 2px 8px; border-radius: 8px; background: var(--surface); font-size: 18px; font-weight: 800; text-decoration: underline var(--hint-line-width) solid var(--sound-line); text-underline-offset: 5px; }
 @media (max-width: 760px) { .reader-tip { margin-left: var(--gutter); margin-right: var(--gutter); } }
 
 .story {
@@ -585,7 +586,7 @@ body[data-mode="pdf"] .reader-tip { max-width: none; margin: 12px var(--gutter) 
 .legend { display: flex; gap: 14px; margin-right: auto; color: var(--ink-soft); font-size: 14px; font-weight: 700; }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { display: none; }
-.legend-item i { width: 22px; height: 0; border-bottom: 3px solid var(--sound-line); }
+.legend-item i { width: 22px; height: 0; border-bottom: var(--hint-line-width) solid var(--sound-line); }
 .legend-item.meaning i { height: 12px; border: 0; border-radius: 4px; background: var(--meaning-tint); box-shadow: inset 0 -3px 0 oklch(0.40 0.10 175 / 0.5); }
 .dock-button {
   display: inline-flex;
@@ -748,7 +749,7 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
   line-height: var(--story-line);
   letter-spacing: var(--story-tracking);
 }
-.preview-word { text-decoration: underline 3px solid var(--sound-line); text-underline-offset: 6px; }
+.preview-word { text-decoration: underline var(--hint-line-width) solid var(--sound-line); text-underline-offset: 6px; }
 .switch { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 6px 0; }
 .switch span { display: grid; gap: 1px; }
 .switch b { font-size: 17px; }
@@ -830,7 +831,7 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
 .guide-art { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; min-height: 64px; padding: 8px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .guide-art span { color: var(--ink) !important; }
 .art-tile { padding: 6px 10px; border-radius: 10px; background: var(--fill); font-size: 14px !important; font-weight: 700; }
-.art-word { font-size: 20px !important; font-weight: 800; text-decoration: underline 3px solid var(--sound-line); text-underline-offset: 5px; }
+.art-word { font-size: 20px !important; font-weight: 800; text-decoration: underline var(--hint-line-width) solid var(--sound-line); text-underline-offset: 5px; }
 .art-card { display: grid; padding: 4px 12px; border-radius: 10px; font-weight: 800; }
 .art-card small { color: var(--ink-soft); font-size: 11px; font-weight: 600; }
 .art-card.sound { background: var(--sound-tint); color: var(--sound) !important; font-size: 20px !important; }
@@ -858,7 +859,7 @@ body[data-reveal="tap"] .always-only, body:not([data-reveal="tap"]) .tap-only { 
 /* ---------- Shared overlay, enlarged for touch ---------- */
 #readseed-overlay .readseed-marker {
   height: 0;
-  border-bottom: 3px solid var(--sound-line);
+  border-bottom: var(--hint-line-width) solid var(--sound-line);
 }
 #readseed-overlay[data-size="medium"] { --readseed-label-size: 14px; --readseed-lane: 24px; }
 .readseed-annotation-space { --readseed-lane: 24px; }

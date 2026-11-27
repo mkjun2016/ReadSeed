@@ -43,4 +43,11 @@ export const BOOKS = [
     file: "books/lights-out.pdf",
     cover: "books/lights-out-cover.jpg",
   },
+  {
+    id: "tiger-brother",
+    title: "호랑이 형님",
+    by: "방정환 지음",
+    file: "books/tiger-brother.pdf",
+    cover: "books/tiger-brother-cover.png",
+  },
 ];
