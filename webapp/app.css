@@ -1049,3 +1049,7 @@ body[data-test="on"] .tip-demo { text-decoration: none; }
 .pdf-tile .tile-icon.big { width: 64px; height: 64px; border-radius: 18px; }
 .pdf-tile .tile-icon.big svg { width: 32px; height: 32px; }
 .pdf-tile > :last-child { margin-top: auto; width: 100%; }
+/* A PDF page is shown as it is (large-text view is off), so text size, spacing and
+   background do not apply there: hide that group while a PDF is open. */
+body[data-mode="pdf"] #set-text,
+body[data-mode="pdf"] .sheet-tabs a[href="#set-text"] { display: none; }
