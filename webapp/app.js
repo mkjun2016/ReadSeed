@@ -2153,14 +2153,30 @@ async function openBook(book, button) {
   const status = $("#book-status");
   status.textContent = "";
   button?.setAttribute("aria-busy", "true");
-  try {
-    const response = await fetch(book.file);
+  status.textContent = `‘${book.title}’을 가져오고 있어요…`;
+  // A big book over a tablet's Wi-Fi can drop once; ask again before giving up.
+  const download = async () => {
+    const response = await fetch(book.file, { cache: "no-store" });
+    if (response.status === 404) throw Object.assign(new Error("missing"), { missing: true });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
+    return response.blob();
+  };
+  try {
+    let blob;
+    try {
+      blob = await download();
+    } catch (error) {
+      if (error.missing) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      blob = await download();
+    }
+    status.textContent = "";
     await openPdf(new File([blob], `${book.title}.pdf`, { type: "application/pdf" }));
   } catch (error) {
     console.error("[ReadSeed]", error);
-    status.textContent = `‘${book.title}’을 열지 못했어요. 책 파일이 이 서버에 있는지 확인해 주세요.`;
+    status.textContent = error.missing
+      ? `‘${book.title}’ 책 파일이 이 서버에 없어요. webapp/books/에 PDF를 넣어 주세요.`
+      : `‘${book.title}’을 내려받지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.`;
   } finally {
     button?.removeAttribute("aria-busy");
   }
