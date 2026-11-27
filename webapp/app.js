@@ -1541,7 +1541,7 @@ function contextOf(range) {
 
 function onTextTap(event) {
   if (mode === "pdf" && pickingParagraph) {
-    const ranges = paragraphAt(event.clientX, event.clientY);
+    const ranges = pdfReadingFrom(event.clientX, event.clientY);
     if (!ranges) {
       setStatus("글자가 있는 곳을 눌러 주세요");
       return;
@@ -2454,13 +2454,12 @@ $("#guide-reading").addEventListener("click", () => {
     stopGuide();
     return;
   }
-  // A PDF page holds titles, captions and a contents list, and its text order is not
-  // its reading order. So the reader taps the paragraph to read; only that one is read.
+  // The reader chooses the starting word in the page’s visual reading order.
   if (mode === "pdf") {
     pickingParagraph = true;
     setLabel("#guide-reading", "한 낱말씩 그만");
     $("#guide-reading").setAttribute("aria-pressed", "true");
-    setStatus("읽을 문단을 톡 눌러요");
+    setStatus("읽기 시작할 낱말을 톡 눌러요");
     return;
   }
   startGuide();
@@ -2485,71 +2484,86 @@ function pdfTextLines() {
     const nodes = [];
     const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
     for (let next = walker.nextNode(); next; next = walker.nextNode()) nodes.push(next);
-    if (!span.textContent.trim()) continue;
+    if (!span.textContent) continue;
     const rect = span.getBoundingClientRect();
     if (!rect.width || !rect.height) continue;
     const page = span.closest(".readseed-pdf-page");
     const height = rect.height;
+    if (!span.textContent.trim() && rect.width > height * 1.2) continue;
     const line = lines.find((item) => item.page === page
       && Math.abs((item.top + item.bottom) / 2 - (rect.top + rect.bottom) / 2) < Math.min(item.height, height) * 0.5
       && Math.max(item.left, rect.left) - Math.min(item.right, rect.right) < Math.min(item.height, height) * 1.5);
     if (line) {
-      line.spans.push({ nodes, left: rect.left });
+      line.spans.push({ nodes, left: rect.left, right: rect.right });
       line.left = Math.min(line.left, rect.left);
       line.right = Math.max(line.right, rect.right);
       line.top = Math.min(line.top, rect.top);
       line.bottom = Math.max(line.bottom, rect.bottom);
       line.height = Math.max(line.height, height);
     } else {
-      lines.push({ page, spans: [{ nodes, left: rect.left }], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height });
+      lines.push({ page, spans: [{ nodes, left: rect.left, right: rect.right }], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height });
     }
   }
   return lines;
 }
 
-// The block of lines around the tapped one: lines of about the same size, in the
-// same column, each close below the one before. Read top to bottom, left to right.
-function paragraphAt(x, y) {
-  const lines = pdfTextLines();
-  const tapped = lines.find((line) => x >= line.left - line.height * 0.5 && x <= line.right + line.height * 0.5
-    && y >= line.top - line.height * 0.4 && y <= line.bottom + line.height * 0.4);
-  if (!tapped) return null;
-  const fits = (a, b) => a.page === b.page && Math.abs(a.height - b.height) <= Math.max(a.height, b.height) * 0.25
-    && Math.min(a.right, b.right) - Math.max(a.left, b.left) >= Math.min(a.right - a.left, b.right - b.left) * 0.5;
-  const nextBelow = (line) => lines.filter((other) => other !== line && fits(line, other)
-    && other.top > line.top + line.height * 0.5 && other.top - line.bottom < line.height * 1.1)
-    .sort((a, b) => a.top - b.top)[0];
-  const nextAbove = (line) => lines.filter((other) => other !== line && fits(line, other)
-    && other.top < line.top - line.height * 0.5 && line.top - other.bottom < line.height * 1.1)
-    .sort((a, b) => b.top - a.top)[0];
-  // A paragraph starts with an indented line, and its last line usually stops short.
-  const indented = (line, below) => below && line.left - below.left > line.height * 0.5 && line.left - below.left < line.height * 3;
-  const short = (line, other) => line.right < other.right - line.height * 2;
-  const block = [tapped];
-  if (!indented(tapped, nextBelow(tapped))) {
-    for (let line = nextAbove(tapped); line && !block.includes(line) && block.length < 80; line = nextAbove(line)) {
-      if (short(line, block[0])) break; // the line above ends the paragraph before
-      block.unshift(line);
-      if (indented(line, block[1])) break; // this line opens the paragraph
-    }
-  }
-  for (let line = nextBelow(block[block.length - 1]); line && !block.includes(line) && block.length < 160; line = nextBelow(line)) {
-    const last = block[block.length - 1];
-    if (indented(line, nextBelow(line)) || short(last, line)) break; // a new paragraph begins
-    block.push(line);
-  }
-  const ranges = [];
-  for (const line of block) {
-    for (const node of [...line.spans].sort((a, b) => a.left - b.left).flatMap((item) => item.nodes)) {
-      for (const match of node.nodeValue.matchAll(/[가-힣A-Za-z0-9]+/g)) {
+// A PDF text item may contain a sentence or just one syllable. Keep the original
+// ranges so highlighting also works when visual order differs from DOM order.
+function pdfLineWords(line) {
+  const words = [];
+  let parts = [];
+  const finish = () => {
+    if (!parts.length) return;
+    const ranges = parts;
+    words.push(ranges.length === 1 ? ranges[0] : {
+      getClientRects: () => ranges.flatMap(range => Array.from(range.getClientRects())),
+    });
+    parts = [];
+  };
+  let previousRight = null;
+  for (const span of line.spans.sort((a, b) => a.left - b.left)) {
+    // Some files position words apart without emitting a space character.
+    if (previousRight !== null && span.left - previousRight > line.height * 0.18) finish();
+    for (const node of span.nodes) {
+      for (const token of node.nodeValue.matchAll(/[^\s\u0000-\u001f]+|[\s\u0000-\u001f]+/gu)) {
+        if (/^[\s\u0000-\u001f]/u.test(token[0])) {
+          finish();
+          continue;
+        }
         const range = document.createRange();
-        range.setStart(node, match.index);
-        range.setEnd(node, match.index + match[0].length);
-        ranges.push(range);
+        range.setStart(node, token.index);
+        range.setEnd(node, token.index + token[0].length);
+        parts.push(range);
       }
     }
+    previousRight = span.right;
   }
-  return ranges.length ? ranges : null;
+  finish();
+  return words;
+}
+
+function pdfReadingFrom(x, y) {
+  const lines = pdfTextLines().sort((a, b) => a.top - b.top);
+  const tapped = lines.filter(line => x >= line.left - line.height * 0.5 && x <= line.right + line.height * 0.5
+    && y >= line.top - line.height * 0.4 && y <= line.bottom + line.height * 0.4)
+    .sort((a, b) => Math.abs(y - (a.top + a.bottom) / 2) - Math.abs(y - (b.top + b.bottom) / 2))[0];
+  if (!tapped) return null;
+  const words = pdfLineWords(tapped);
+  if (!words.length) return null;
+  const distances = words.map(word => Math.min(...Array.from(word.getClientRects(),
+    rect => Math.max(rect.left - x, x - rect.right, 0))));
+  const ranges = words.slice(distances.indexOf(Math.min(...distances)));
+  let previous = tapped;
+  for (const line of lines) {
+    if (line.page !== tapped.page || line.top < previous.top + previous.height * 0.5) continue;
+    if (line.top - previous.bottom > previous.height * 1.4) break;
+    // Anchor the column to its left margin, even when the opening line is one word.
+    if (Math.abs(line.left - tapped.left) > tapped.height * 2.5) continue;
+    if (Math.abs(line.height - tapped.height) > Math.max(line.height, tapped.height) * 0.22) break;
+    ranges.push(...pdfLineWords(line));
+    previous = line;
+  }
+  return ranges;
 }
 
 function loadSessions() {
