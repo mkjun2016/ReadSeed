@@ -2143,7 +2143,7 @@ function renderSamples() {
     icon.innerHTML = mark;
     const cover = element("span", "cover", element("span", "text-cover", element("span", "kind", sample.kind), element("span", "big", sample.title), icon));
     cover.firstChild.dataset.tone = tones[index % tones.length];
-    const button = element("button", "book", cover, element("span", "name", sample.title), element("span", "by", `ReadSeed 연습 글 · ${sample.kind}`));
+    const button = element("button", "book", cover, element("span", "name", sample.title));
     button.type = "button";
     button.setAttribute("role", "listitem");
     button.addEventListener("click", () => openText(sample));
@@ -2167,19 +2167,6 @@ $("#home-button").addEventListener("click", leaveReader);
 $("#settings-button").addEventListener("click", () => openDialog($("#settings")));
 $("#guide-button").addEventListener("click", () => openDialog($("#guide")));
 $("#guide").addEventListener("close", () => writeStorage(GUIDE_KEY, "1"));
-// Dropping a PDF on its tile opens it, the same as choosing it.
-const pdfTile = $("#pdf-drop").closest(".tile");
-pdfTile.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  $("#pdf-drop").classList.add("over");
-});
-pdfTile.addEventListener("dragleave", () => $("#pdf-drop").classList.remove("over"));
-pdfTile.addEventListener("drop", (event) => {
-  event.preventDefault();
-  $("#pdf-drop").classList.remove("over");
-  const file = event.dataTransfer?.files?.[0];
-  if (file) openPdf(file).catch(reportError);
-});
 $("#pdf-input").addEventListener("change", (event) => {
   openPdf(event.target.files?.[0]).catch(reportError);
   event.target.value = "";

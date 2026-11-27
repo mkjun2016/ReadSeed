@@ -40,7 +40,7 @@
       <section class="welcome">
         <div class="welcome-text">
           <h1>오늘은 무엇을 <br />읽을까요?</h1>
-          <p>읽다가 막히는 낱말을 <b>톡</b> 누르면, 어떻게 읽는지 알려 줄게요. 글은 바꾸지 않고 옆에서 살짝 도와요.</p>
+          <p>읽다가 막히는 낱말을 <b>톡</b> 누르면, 어떻게 읽는지 알려 줄게요.</p>
         </div>
         <div class="try" aria-labelledby="try-title">
           <p class="try-title" id="try-title"><span class="pulse" aria-hidden="true"></span>여기서 한번 눌러 보세요</p>
@@ -98,15 +98,10 @@
           <h2 id="own-title">내 글 읽기</h2>
         </div>
         <div class="two-up">
-          <div class="tile">
-            <div class="tile-head">
-              <i class="tile-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg></i>
-              <div><h3>PDF 열기</h3><p>교과서·학습지 PDF를 책처럼 펼쳐 읽어요.</p></div>
-            </div>
-            <div id="pdf-drop" class="pdf-drop" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 16V5M7 10l5-5 5 5M5 19h14" /></svg>
-              <span>PDF를 여기로 끌어다 놓아도 돼요</span>
-            </div>
+          <div class="tile pdf-tile">
+            <i class="tile-icon big" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg></i>
+            <h3>PDF 열기</h3>
+            <p>교과서·학습지 PDF를 책처럼 펼쳐 읽어요.</p>
             <label class="primary-button file-button">
               PDF 고르기
               <input id="pdf-input" type="file" accept="application/pdf,.pdf" />

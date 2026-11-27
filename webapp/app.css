@@ -1036,18 +1036,11 @@ body[data-test="on"] .tip-demo { text-decoration: none; }
 
 .paste-count { margin: -4px 0 8px; text-align: right; color: var(--ink-faint); font-size: 13px; font-variant-numeric: tabular-nums; }
 .paste-count.over { color: oklch(0.55 0.16 50); font-weight: 600; }
-.pdf-drop {
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 6px;
-  flex: 1;
-  min-height: 112px;
-  border: 1.5px dashed var(--line);
-  border-radius: 14px;
-  color: var(--ink-faint);
-  font-size: 14px;
-  text-align: center;
-}
-.pdf-drop svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.pdf-drop.over { border-color: var(--brand); background: var(--brand-tint); color: var(--brand-strong); }
+/* PDF tile: nothing to type, so icon, title and button sit centred as one group. */
+.pdf-tile { align-items: center; text-align: center; gap: 10px; }
+.pdf-tile > :first-child { margin-top: auto; } /* with the button's auto margin: group centred, button at the bottom */
+.pdf-tile h3 { margin: 6px 0 0; font-size: 20px; }
+.pdf-tile p { margin: 0 0 14px; color: var(--ink-soft); }
+.pdf-tile .tile-icon.big { width: 64px; height: 64px; border-radius: 18px; }
+.pdf-tile .tile-icon.big svg { width: 32px; height: 32px; }
+.pdf-tile > :last-child { margin-top: auto; width: 100%; }
