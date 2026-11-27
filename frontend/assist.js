@@ -210,7 +210,7 @@
       reading.controls = null;
     }
 
-    function clearOverlay({ keepResults = false } = {}) {
+    function clearOverlay({ keepResults = false, keepGuide = false } = {}) {
       state.root?.remove();
       state.spacedElements.forEach((previousClass, element) => {
         if (previousClass === null) element.removeAttribute("class");
@@ -220,7 +220,7 @@
       state.entries = [];
       state.spacedElements.clear();
       if (!keepResults) state.lastResults = [];
-      clearReadingGuide();
+      if (!keepGuide) clearReadingGuide();
     }
 
     // Find the block that owns a word so its line spacing can be widened. Pages such
@@ -331,7 +331,9 @@
     }
 
     function renderAssistance(results, settings = {}) {
-      clearOverlay({ keepResults: true });
+      // Hints arrive in steps while the reader may already be following the guide;
+      // redrawing them must not stop it.
+      clearOverlay({ keepResults: true, keepGuide: true });
       state.lastResults = results;
       state.settings = { ...DEFAULT_SETTINGS, ...settings };
       const { nodes, text } = collectTextNodes();
@@ -357,7 +359,7 @@
       });
       // Measure label positions only after the spacing classes have reflowed the text.
       updateOverlayPositions();
-      if (state.settings.readingGuide) startReadingGuide();
+      if (state.settings.readingGuide && !reading.ranges.length) startReadingGuide();
       return summary();
     }
 
@@ -566,16 +568,21 @@
       reading.controls = controls;
     }
 
-    function startReadingGuide() {
+    // `given` lets a host choose the words and their order itself — a PDF page,
+    // whose text order is not its reading order, passes the paragraph the reader
+    // tapped, word by word.
+    function startReadingGuide(given = null) {
       clearReadingGuide();
-      const { nodes, text } = collectTextNodes({ separateBlocks: true });
-      const ranges = [];
-      const pattern = /[가-힣A-Za-z0-9]+/g;
-      let match;
-      while ((match = pattern.exec(text))) {
-        const range = rangeForText(nodes, match.index, match.index + match[0].length);
-        if (range) ranges.push(range);
-        if (ranges.length >= 1000) break;
+      const ranges = given ? [...given] : [];
+      if (!given) {
+        const { nodes, text } = collectTextNodes({ separateBlocks: true });
+        const pattern = /[가-힣A-Za-z0-9]+/g;
+        let match;
+        while ((match = pattern.exec(text))) {
+          const range = rangeForText(nodes, match.index, match.index + match[0].length);
+          if (range) ranges.push(range);
+          if (ranges.length >= 1000) break;
+        }
       }
       if (!ranges.length) return { ok: false, error: "읽을 단어를 찾지 못했습니다." };
       reading.ranges = ranges;
@@ -620,7 +627,7 @@
         case "READSEED_UPDATE_SETTINGS":
           return { ok: true, ...renderAssistance(state.lastResults, message.settings || {}) };
         case "READSEED_START_READING":
-          return startReadingGuide();
+          return startReadingGuide(message.ranges || null);
         case "READSEED_STOP_READING":
           clearReadingGuide();
           return { ok: true };

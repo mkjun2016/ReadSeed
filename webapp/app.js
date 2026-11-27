@@ -113,6 +113,7 @@ const patchAssist = create({ excludedSelector: `${EXCLUDED_SELECTORS}, .textLaye
 const textCache = new Map();
 let settings = loadSettings();
 let mode = null;
+let pickingParagraph = false; // PDF: waiting for the reader to tap the paragraph to read
 let activeAssist = null;
 let run = 0;
 let taps = new Map();
@@ -487,6 +488,7 @@ function startReading(title) {
   pdfAssist.clearOverlay();
   patchAssist.clearOverlay();
   $("#appbar-title").textContent = title;
+  pickingParagraph = false;
   setLabel("#guide-reading", "한 낱말씩 읽기");
   $("#guide-reading").setAttribute("aria-pressed", "false");
   showView("reader");
@@ -747,7 +749,9 @@ function turnPage(direction) {
 }
 
 function stopGuide() {
-  if (!document.querySelector("#readseed-reading-controls")) return;
+  const picking = pickingParagraph;
+  pickingParagraph = false;
+  if (!document.querySelector("#readseed-reading-controls") && !picking) return;
   activeAssist?.handleMessage({ type: "READSEED_STOP_READING" });
   setLabel("#guide-reading", "한 낱말씩 읽기");
   $("#guide-reading").setAttribute("aria-pressed", "false");
@@ -1506,6 +1510,16 @@ function contextOf(range) {
 }
 
 function onTextTap(event) {
+  if (mode === "pdf" && pickingParagraph) {
+    const ranges = paragraphAt(event.clientX, event.clientY);
+    if (!ranges) {
+      setStatus("글자가 있는 곳을 눌러 주세요");
+      return;
+    }
+    pickingParagraph = false;
+    if (startGuide(ranges)) setStatus("");
+    return;
+  }
   const info = wordNear(event.clientX, event.clientY) || (dailyTest && plainWordAt(event.clientX, event.clientY));
   if (info) showCard(info);
   else if (mode === "pdf" && card.hidden) turnPage(event.clientX > window.innerWidth / 2 ? 1 : -1);
@@ -2406,19 +2420,106 @@ $("#hint-more").addEventListener("click", () => {
 $("#guide-reading").addEventListener("click", () => {
   if (!activeAssist) return;
   hideCard();
-  if (document.querySelector("#readseed-reading-controls")) {
-    activeAssist.handleMessage({ type: "READSEED_STOP_READING" });
-    setLabel("#guide-reading", "한 낱말씩 읽기");
-    $("#guide-reading").setAttribute("aria-pressed", "false");
+  if (document.querySelector("#readseed-reading-controls") || pickingParagraph) {
+    stopGuide();
     return;
   }
-  const result = activeAssist.handleMessage({ type: "READSEED_START_READING" });
+  // A PDF page holds titles, captions and a contents list, and its text order is not
+  // its reading order. So the reader taps the paragraph to read; only that one is read.
+  if (mode === "pdf") {
+    pickingParagraph = true;
+    setLabel("#guide-reading", "한 낱말씩 그만");
+    $("#guide-reading").setAttribute("aria-pressed", "true");
+    setStatus("읽을 문단을 톡 눌러요");
+    return;
+  }
+  startGuide();
+});
+
+function startGuide(ranges = null) {
+  const result = activeAssist.handleMessage({ type: "READSEED_START_READING", ranges });
   if (result?.ok) {
     setLabel("#guide-reading", "한 낱말씩 그만");
     $("#guide-reading").setAttribute("aria-pressed", "true");
+  } else setStatus("한 낱말씩 읽을 글자를 찾지 못했어요");
+  return Boolean(result?.ok);
+}
+
+// ---------- One paragraph of a PDF page, in reading order ----------
+
+
+// The text layer as lines: spans that share a baseline and touch each other.
+function pdfTextLines() {
+  const lines = [];
+  for (const span of pdfPages.querySelectorAll(".textLayer span")) {
+    const node = span.firstChild;
+    if (node?.nodeType !== Node.TEXT_NODE || !node.nodeValue.trim()) continue;
+    const rect = span.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    const page = span.closest(".readseed-pdf-page");
+    const height = rect.height;
+    const line = lines.find((item) => item.page === page
+      && Math.abs((item.top + item.bottom) / 2 - (rect.top + rect.bottom) / 2) < Math.min(item.height, height) * 0.5
+      && Math.max(item.left, rect.left) - Math.min(item.right, rect.right) < Math.min(item.height, height) * 1.5);
+    if (line) {
+      line.spans.push({ node, left: rect.left });
+      line.left = Math.min(line.left, rect.left);
+      line.right = Math.max(line.right, rect.right);
+      line.top = Math.min(line.top, rect.top);
+      line.bottom = Math.max(line.bottom, rect.bottom);
+      line.height = Math.max(line.height, height);
+    } else {
+      lines.push({ page, spans: [{ node, left: rect.left }], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height });
+    }
   }
-  else setStatus("한 낱말씩 읽을 글자를 찾지 못했어요");
-});
+  return lines;
+}
+
+// The block of lines around the tapped one: lines of about the same size, in the
+// same column, each close below the one before. Read top to bottom, left to right.
+function paragraphAt(x, y) {
+  const lines = pdfTextLines();
+  const tapped = lines.find((line) => x >= line.left - line.height * 0.5 && x <= line.right + line.height * 0.5
+    && y >= line.top - line.height * 0.4 && y <= line.bottom + line.height * 0.4);
+  if (!tapped) return null;
+  const fits = (a, b) => a.page === b.page && Math.abs(a.height - b.height) <= Math.max(a.height, b.height) * 0.25
+    && Math.min(a.right, b.right) - Math.max(a.left, b.left) >= Math.min(a.right - a.left, b.right - b.left) * 0.5;
+  const nextBelow = (line) => lines.filter((other) => other !== line && fits(line, other)
+    && other.top > line.top + line.height * 0.5 && other.top - line.bottom < line.height * 1.1)
+    .sort((a, b) => a.top - b.top)[0];
+  const nextAbove = (line) => lines.filter((other) => other !== line && fits(line, other)
+    && other.top < line.top - line.height * 0.5 && line.top - other.bottom < line.height * 1.1)
+    .sort((a, b) => b.top - a.top)[0];
+  // A paragraph starts with an indented line, and its last line usually stops short.
+  const indented = (line, below) => below && line.left - below.left > line.height * 0.5 && line.left - below.left < line.height * 3;
+  const short = (line, other) => line.right < other.right - line.height * 2;
+  const block = [tapped];
+  if (!indented(tapped, nextBelow(tapped))) {
+    for (let line = nextAbove(tapped); line && !block.includes(line) && block.length < 80; line = nextAbove(line)) {
+      if (short(line, block[0])) break; // the line above ends the paragraph before
+      block.unshift(line);
+      if (indented(line, block[1])) break; // this line opens the paragraph
+    }
+  }
+  for (let line = nextBelow(block[block.length - 1]); line && !block.includes(line) && block.length < 160; line = nextBelow(line)) {
+    const last = block[block.length - 1];
+    if (indented(line, nextBelow(line)) || short(last, line)) break; // a new paragraph begins
+    block.push(line);
+  }
+  const ranges = [];
+  for (const line of block) {
+    for (const { node } of [...line.spans].sort((a, b) => a.left - b.left)) {
+      for (const match of node.nodeValue.matchAll(/[가-힣A-Za-z0-9]+/g)) {
+        const range = document.createRange();
+        range.setStart(node, match.index);
+        range.setEnd(node, match.index + match[0].length);
+        ranges.push(range);
+      }
+    }
+  }
+  return ranges.length ? ranges : null;
+}
+
 function loadSessions() {
   try {
     const sessions = JSON.parse(readStorage(SESSIONS_KEY) || "[]");
