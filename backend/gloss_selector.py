@@ -148,7 +148,7 @@ def _store_selection(key: str, selection: Selection) -> None:
 
 def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict], surface: str = "") -> str:
     payload = {
-        "version": "gloss-selector-v5",
+        "version": "gloss-selector-v7",
         "surface": surface,
         "model": os.getenv("GLOSS_LLM_MODEL"),
         "sentence": sentence,
@@ -190,6 +190,9 @@ def _usable_candidates(candidates: list[dict]) -> list[dict]:
     return result
 
 
+SINGLE_SENSE_LEVELS = ("고급", "없음")
+
+
 def select_rule_only(word: str, pos: str, candidates: list[dict]) -> Selection:
     """LLM 없이 적용하는 안전 규칙. 다의어는 선택 근거가 없으므로 숨긴다."""
     if pos == "NNP":
@@ -199,7 +202,9 @@ def select_rule_only(word: str, pos: str, candidates: list[dict]) -> Selection:
         return Selection(None, "beginner_or_nonlocal")
     if len(usable) != 1:
         return Selection(None, "ambiguous")
-    if usable[0].get("난이도") != "고급":
+    # 뜻이 하나뿐이면 고를 뜻이 틀릴 일이 없다. 고급과
+    # 기초사전이 등급을 매기지 않은 ‘없음’(민관 등)은 쉽다는 뜻이 아니라 보여 준다. 중급(국민 등)은 AI가 판단.
+    if usable[0].get("난이도") not in SINGLE_SENSE_LEVELS:
         return Selection(None, "not_advanced_without_llm")
     return Selection(usable[0], "single_sense", 1.0)
 
@@ -460,6 +465,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
     surfaces = surfaces or [word for word, _, _ in items]
     results: list[Optional[Selection]] = [None] * len(items)
     unresolved: list[tuple[int, str, str, list[dict], str]] = []
+    single: dict[int, Selection] = {}
     pending: set[str] = set()
     repeats: list[tuple[int, str]] = []
     for item_index, (word, pos, candidates) in enumerate(items):
@@ -468,6 +474,8 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
             results[item_index] = rule_result
             continue
         usable = _usable_candidates(candidates)[:MAX_CANDIDATES_PER_WORD]
+        if rule_result.reason == "single_sense":
+            single[item_index] = rule_result
         if not use_llm or not _llm_configured():
             # 보호자가 AI 사용을 끄거나 키가 없으면 문장을 밖으로 보내지 않는다.
             # 뜻이 하나뿐인 고급어처럼 규칙만으로 확실한 경우만 보여 준다.
@@ -479,7 +487,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         key = _fingerprint(sentence, word, pos, usable, surfaces[item_index])
         cached = _selection_cache.get(key) or _load_persistent(key, usable)
         if cached:
-            results[item_index] = cached
+            results[item_index] = cached if cached.candidate or item_index not in single else single[item_index]
         elif key in pending:
             # 같은 문장에 같은 낱말이 또 나오면(장애 … 장애학생지원센터) 한 번만 묻는다.
             repeats.append((item_index, key))
@@ -513,6 +521,11 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         else:
             suggested = candidates[index] if isinstance(index, int) and 0 <= index < len(candidates) and answer.get("decision") == "show" else None
             selection = Selection(None, "llm_uncertain", confidence, suggestion=suggested)
+        if not selection.candidate and item_index in single and answer is not None:
+            # 뜻이 하나뿐인 낱말은 AI가 ‘쉬운 말’이라며 숨겨도 보여 준다(어른 기준으로 쉽다고
+            # 보는 민관·협력 같은 말). AI는 쉬운 말 풀이만 보태고, 없으면 사전 뜻을 쓴다.
+            selection = Selection(single[item_index].candidate, "single_sense", 1.0,
+                                  easy=clean_easy(answer.get("easy")) if answer.get("candidate_index") == 0 else None)
         if answer is not None:
             _store_selection(key, selection)
         results[item_index] = selection

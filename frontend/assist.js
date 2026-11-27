@@ -63,7 +63,28 @@
       try { return state.targetRange.intersectsNode(node); } catch (_error) { return false; }
     }
 
-    function collectTextNodes() {
+    // With `separateBlocks`, a newline is put between text from different blocks (or
+    // across a <br>), so the last word of one line and the first word of the next are
+    // never read as one word ("읽어요" + "우리"). Analysis keeps the plain join.
+    function blockOf(node) {
+      let element = node.parentElement;
+      while (element && element !== state.contentRoot) {
+        if (element.matches?.(BLOCK_SELECTOR)) return element;
+        const display = win.getComputedStyle(element).display;
+        if (!display.startsWith("inline") && display !== "contents") return element;
+        element = element.parentElement;
+      }
+      return element;
+    }
+
+    function brBetween(previous, node) {
+      const range = doc.createRange();
+      range.setStartAfter(previous);
+      range.setEndBefore(node);
+      return Boolean(range.cloneContents().querySelector?.("br"));
+    }
+
+    function collectTextNodes({ separateBlocks = false } = {}) {
       const root = state.contentRoot;
       if (!root) return { nodes: [], text: "" };
       const walker = doc.createTreeWalker(root, win.NodeFilter.SHOW_TEXT, {
@@ -75,7 +96,10 @@
       const nodes = [];
       let text = "";
       let node;
+      let previous = null;
       while ((node = walker.nextNode())) {
+        if (separateBlocks && previous && (blockOf(previous) !== blockOf(node) || brBetween(previous, node))) text += "\n";
+        previous = node;
         let nodeStart = 0;
         let nodeEnd = node.nodeValue.length;
         if (state.targetRange?.startContainer === node) nodeStart = state.targetRange.startOffset;
@@ -412,10 +436,22 @@
     function updateReadingHighlight() {
       const range = reading.ranges[reading.index];
       if (!range || !reading.highlight) return;
-      const rect = Array.from(range.getClientRects()).find((item) => item.width && item.height);
-      if (!rect) return;
-      Object.assign(reading.highlight.style, {
-        left: `${rect.left - 2}px`, top: `${rect.top - 2}px`, width: `${rect.width + 4}px`, height: `${rect.height + 4}px`,
+      // A word that wraps onto the next line has one rect per line; highlight them all.
+      const rects = mergeLineRects(range.getClientRects());
+      if (!rects.length) return;
+      const boxes = Array.from(reading.highlight.children);
+      while (boxes.length < rects.length) {
+        const box = doc.createElement("div");
+        box.className = "readseed-reading-highlight";
+        reading.highlight.append(box);
+        boxes.push(box);
+      }
+      boxes.forEach((box, index) => {
+        const rect = rects[index];
+        box.style.display = rect ? "block" : "none";
+        if (rect) Object.assign(box.style, {
+          left: `${rect.left - 2}px`, top: `${rect.top - 2}px`, width: `${rect.width + 4}px`, height: `${rect.height + 4}px`,
+        });
       });
       const counter = reading.controls?.querySelector("[data-readseed-counter]");
       if (counter) counter.textContent = `${reading.index + 1} / ${reading.ranges.length}`;
@@ -433,8 +469,23 @@
       if (!reading.ranges.length) return;
       reading.index = Math.max(0, Math.min(reading.index + delta, reading.ranges.length - 1));
       updateReadingHighlight();
-      reading.ranges[reading.index].startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
+      keepWordInView(reading.ranges[reading.index]);
       if (reading.index === reading.ranges.length - 1 && delta > 0) pauseReading();
+    }
+
+    // Scroll by the word itself, and only when it leaves the middle band of the screen.
+    // Centring the whole paragraph (as before) pushed the current word off screen once
+    // wide line spacing made paragraphs taller than the window.
+    function keepWordInView(range) {
+      const rect = Array.from(range.getClientRects()).find((item) => item.width && item.height);
+      if (!rect) return;
+      const inset = doc.documentElement.classList.contains("readseed-toolbar-open") ? 56 : 0;
+      const height = win.innerHeight - inset;
+      const top = inset + height * 0.2;
+      const bottom = inset + height * 0.75;
+      if (rect.top >= top && rect.bottom <= bottom) return;
+      const reduce = win.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      win.scrollBy({ top: rect.top - (inset + height * 0.4), behavior: reduce ? "auto" : "smooth" });
     }
 
     function playReading() {
@@ -471,7 +522,7 @@
 
     function startReadingGuide() {
       clearReadingGuide();
-      const { nodes, text } = collectTextNodes();
+      const { nodes, text } = collectTextNodes({ separateBlocks: true });
       const ranges = [];
       const pattern = /[가-힣A-Za-z0-9]+/g;
       let match;
@@ -483,7 +534,7 @@
       if (!ranges.length) return { ok: false, error: "읽을 단어를 찾지 못했습니다." };
       reading.ranges = ranges;
       const highlight = doc.createElement("div");
-      highlight.className = "readseed-reading-highlight";
+      highlight.className = "readseed-reading-highlights";
       doc.body.append(highlight);
       reading.highlight = highlight;
       createReadingControls();

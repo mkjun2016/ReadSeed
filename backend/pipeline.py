@@ -137,7 +137,7 @@ _REASON_TEXT = {
     "beginner_or_nonlocal": "초급어이거나 기초사전에 없음 → 표시 안 함",
     "ambiguous": "뜻이 여러 개라 규칙만으로는 고를 수 없음",
     "not_advanced_without_llm": "고급어가 아님",
-    "single_sense": "뜻이 하나뿐인 고급어 → 규칙으로 표시",
+    "single_sense": "뜻이 하나뿐인 고급·등급 없음 낱말 → 규칙으로 표시",
     "llm_selected": "AI가 후보 중 문맥에 맞는 뜻을 고름",
     "llm_uncertain": f"AI 확신이 기준({gloss_selector.MIN_CONFIDENCE:.2f}) 미만 → 표시하지 않고 선생님 검토로",
     "llm_hidden": "AI 판단: 쉬운 말이거나 맞는 뜻이 없음 → 표시 안 함",

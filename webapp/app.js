@@ -112,7 +112,7 @@ let activeAssist = null;
 let run = 0;
 let taps = new Map();
 let pdfjs = null;
-const pdf = { doc: null, pages: [], cache: new Map(), layouts: new Map(), zoom: 1, large: true, spread: false, portraitOk: false, current: null, visibility: new Map(), timer: null, observers: [] };
+const pdf = { doc: null, pages: [], cache: new Map(), layouts: new Map(), zoom: 1, large: false, spread: false, portraitOk: false, current: null, visibility: new Map(), timer: null, observers: [] };
 
 // ---------- Storage (may be unavailable in private browsing) ----------
 
@@ -561,7 +561,9 @@ async function openPdf(file) {
   $("#story").hidden = true;
   pdfSection.hidden = false;
   $("#pdf-zoom").hidden = false;
-  $("#pdf-view").hidden = false;
+  // ‘큰 글씨로 보기’ is switched off for now (2026-11-27): too many layout bugs on
+  // real PDFs. Pages open as they are; zoom (＋/－) enlarges them instead.
+  $("#pdf-view").hidden = true;
   pdf.cache = new Map();
   pdf.layouts = new Map();
   pdf.zoom = 1;
@@ -929,7 +931,7 @@ async function analyzePdfPage(entry) {
   }
   if (!pdf.large && layout.scanned) {
     // The scanned image has no text to anchor hints to; the patches do.
-    setStatus("그림으로 된 쪽은 ‘큰 글씨로 보기’에서 힌트를 볼 수 있어요");
+    setStatus("그림으로 된 쪽(스캔)은 아직 힌트를 볼 수 없어요. 글자가 있는 PDF를 열어 주세요.");
     return;
   }
   const assist = pdf.large ? patchAssist : pdfAssist;

@@ -80,6 +80,18 @@ class GlossSelectorTest(unittest.TestCase):
         self.assertEqual(fallback.candidate["_local_id"], "1:1")
         self.assertIsNone(fallback.easy)  # 화면은 사전 뜻으로 대신한다
 
+    def test_single_sense_ungraded_word_is_shown_even_if_ai_calls_it_easy(self):
+        # 기초사전 등급 ‘없음’은 쉽다는 뜻이 아니다(민관). 뜻이 하나뿐이라 틀릴 일도 없다.
+        only = [entry("민간과 관청.", level="없음")]
+        self.assertEqual(gloss_selector.select_rule_only("민관", "NNG", only).reason, "single_sense")
+        config = {"GLOSS_LLM_API_URL": "https://example.test", "GLOSS_LLM_API_KEY": "key", "GLOSS_LLM_MODEL": "test"}
+        gloss_selector.clear_cache()
+        with patch.dict(os.environ, config, clear=True), patch.object(gloss_selector, "_load_persistent", return_value=None), patch.object(gloss_selector, "_store_selection"), \
+                patch.object(gloss_selector, "_request_llm_batch", return_value=[{"decision": "hide", "candidate_index": None, "confidence": 0.9, "easy": None}]):
+            result = gloss_selector.select("민관이 함께 일한다.", "민관", "NNG", only)
+        self.assertEqual(result.candidate["뜻풀이"], "민간과 관청.")
+        self.assertEqual(result.reason, "single_sense")
+
     def test_llm_invalid_answer_hides_annotation(self):
         candidates = [entry("첫째", local_id="1:1"), entry("둘째", local_id="2:1")]
         config = {"GLOSS_LLM_API_URL": "https://example.test", "GLOSS_LLM_API_KEY": "key", "GLOSS_LLM_MODEL": "test"}
