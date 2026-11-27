@@ -2698,6 +2698,6 @@ $("#home-plan-state").hidden = !readStorage(PLAN_KEY);
 applySettings();
 showServerStatus();
 updateReviewButton();
-// First run: the guardian notice comes before anything is sent anywhere.
-if (!readStorage(CONSENT_KEY)) openDialog($("#consent"));
-else if (!readStorage(GUIDE_KEY)) openDialog($("#guide"));
+// Every time the app opens, the guardian notice comes before anything is sent
+// anywhere (the guide follows once, on the first run).
+openDialog($("#consent"));
