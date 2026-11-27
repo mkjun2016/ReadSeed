@@ -204,6 +204,7 @@
       reading.timer = null;
       reading.playing = false;
       reading.ranges = [];
+      reading.index = 0; // a new start begins at its first word, not where the last one stopped
       reading.highlight?.remove();
       reading.controls?.remove();
       reading.highlight = null;
