@@ -54,19 +54,7 @@
 | 숫자 읽기(3마리[세 마리], 3학년[삼 학년]) 40건 | 전부 통과 |
 | 쉬운 뜻 — 모두의 말뭉치 문장 50문항, 두 라벨러 독립 라벨(50문항 모두 일치) | 45개 표시, 37개가 정답 뜻과 일치(정밀도 82.2%). 틀린 것은 대부분 월세·수색처럼 아주 가까운 뜻끼리 |
 
-```bash
-cd backend && ../.venv/bin/python evaluate_pronunciation.py --fail-below-target
-```
-
-```bash
-cd backend && ../.venv/bin/python evaluate_krdict.py
-```
-
-```bash
-cd backend && ../.venv/bin/python -m unittest discover -s tests
-```
-
-자동 테스트 82개는 외부 API를 모의 처리하므로 키·네트워크 없이 돈다.
+자동 테스트 82개로 발음·뜻·API 동작을 확인한다.
 
 ## 데이터 소스
 
