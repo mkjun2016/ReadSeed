@@ -471,13 +471,15 @@ body[data-mode="pdf"] .reader-tip { max-width: none; margin: 12px var(--gutter) 
 
 .pdf { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .pdf-pages {
-  display: grid;
-  justify-items: center;
+  /* An open book: the pages of one spread side by side, turned with the side buttons. */
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   width: max-content;
   min-width: 100%;
-  gap: 18px;
+  gap: 6px;
   /* Pages use the full screen width; the safe-area inset still applies. */
-  padding: 18px max(10px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)) 0;
+  padding: 10px max(10px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)) 0;
   -webkit-touch-callout: none;
 }
 .readseed-pdf-page {
@@ -518,6 +520,12 @@ body[data-mode="pdf"] .reader-tip { max-width: none; margin: 12px var(--gutter) 
 .reflow-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
 .reflow-flow .reflow-patch { position: static; flex: 1 1 auto; min-width: min(100%, 8em); }
 .readseed-pdf-page.flow-text canvas, .readseed-pdf-page.flow-text .textLayer { visibility: hidden; }
+.pdf-pages.turn-next { animation: turn-next 0.28s ease-out; }
+.pdf-pages.turn-prev { animation: turn-prev 0.28s ease-out; }
+@keyframes turn-next { from { opacity: 0.3; transform: translateX(40px); } }
+@keyframes turn-prev { from { opacity: 0.3; transform: translateX(-40px); } }
+@media (prefers-reduced-motion: reduce) { .pdf-pages.turn-next, .pdf-pages.turn-prev { animation: none; } }
+.pdf-page-info { margin-right: 10px; color: var(--ink-soft); font-size: 15px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .page-number { position: absolute; right: 10px; bottom: 8px; color: var(--ink-faint); font-size: 13px; }
 
 /* PDF.js text layer: transparent text aligned over the page image. */

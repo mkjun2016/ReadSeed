@@ -24,7 +24,7 @@ class AgentTraceTest(unittest.TestCase):
     def test_unsure_ai_choice_goes_to_human_review_not_to_the_screen(self):
         candidates = [entry("조문", "1:1"), entry("내용을 자세히 살펴봄", "2:1")]
         unsure = gloss_selector.Selection(None, "llm_uncertain", 0.6, suggestion=candidates[1])
-        with patch.object(pipeline.dict_lookup, "lookup", return_value=candidates), patch.object(pipeline.gloss_selector, "select_many", side_effect=lambda sentence, items, use_llm=True, surfaces=None: [unsure] * len(items)):
+        with patch.object(pipeline.dict_lookup, "lookup", return_value=candidates), patch.object(pipeline.gloss_selector, "select_many", side_effect=lambda sentence, items, use_llm=True, surfaces=None, parts=None: [unsure] * len(items)):
             result = pipeline.explain_sentence("경찰이 조사를 했다.")
         word = next(w for w in result["annotations"] if w["표기"] == "조사를")
         self.assertEqual(word["뜻풀이후보"], [])

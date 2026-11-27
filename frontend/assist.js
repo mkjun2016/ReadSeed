@@ -129,26 +129,72 @@
       return index % 3 !== 2;
     }
 
-    function flattenWords(results) {
-      return results.flatMap((result) => (result?.ok && Array.isArray(result.annotations) ? result.annotations : []));
+    // Text without white space, with each character's index in the original text.
+    // PDF text layers and page text differ in where spaces and line breaks fall, so
+    // sentences and words are matched on this compact form.
+    function compactText(text) {
+      let compact = "";
+      const index = [];
+      for (let i = 0; i < text.length; i += 1) {
+        if (/\s/.test(text[i])) continue;
+        compact += text[i];
+        index.push(i);
+      }
+      return { compact, index };
     }
 
-    function locateWords(words, nodes, text) {
+    const squeeze = (value) => String(value || "").replace(/\s+/g, "");
+
+    // Each sentence is found on its own, so one sentence out of order (a PDF's
+    // reading order often differs from its text order) never hides the hints of
+    // the sentences after it. Words are then found inside their own sentence.
+    function locateWords(results, nodes, text) {
+      const { compact, index } = compactText(text);
       const located = [];
-      let cursor = 0;
-      for (const word of words) {
-        if (!word?.어절) continue;
-        let matched = word.어절;
-        let start = text.indexOf(matched, cursor);
-        if (start < 0 && word.표기) {
-          matched = word.표기;
-          start = text.indexOf(matched, cursor);
+      const used = [];
+      const overlaps = (start, end) => used.some(([a, b]) => start < b && end > a);
+      const findSentence = (sentence, from) => {
+        if (!sentence) return null;
+        // Try the whole sentence first, then shorter heads of it (a sentence may run
+        // past a page edge or carry characters the text layer lacks).
+        for (const length of [sentence.length, 24, 12]) {
+          const head = sentence.slice(0, length);
+          if (head.length < Math.min(6, sentence.length)) break;
+          for (const origin of [from, 0]) {
+            let start = compact.indexOf(head, origin);
+            while (start >= 0 && overlaps(start, start + head.length)) start = compact.indexOf(head, start + 1);
+            if (start >= 0) return { start, end: Math.min(compact.length, start + sentence.length + 8) };
+          }
         }
-        if (start < 0) continue;
-        const end = start + matched.length;
-        const range = rangeForText(nodes, start, end);
-        if (range) located.push({ word, range });
-        cursor = end;
+        return null;
+      };
+      let lastEnd = 0;
+      for (const result of results) {
+        if (!result?.ok || !Array.isArray(result.annotations)) continue;
+        const span = findSentence(squeeze(result.sentence), lastEnd) || { start: 0, end: compact.length, loose: true };
+        if (!span.loose) {
+          used.push([span.start, span.end]);
+          lastEnd = span.end;
+        }
+        let cursor = span.start;
+        for (const word of result.annotations) {
+          if (!word?.어절) continue;
+          let start = -1;
+          let length = 0;
+          for (const form of [squeeze(word.어절), squeeze(word.표기)]) {
+            if (!form) continue;
+            start = compact.indexOf(form, cursor);
+            if (start >= 0 && start < span.end) {
+              length = form.length;
+              break;
+            }
+            start = -1;
+          }
+          if (start < 0) continue;
+          const range = rangeForText(nodes, index[start], index[start + length - 1] + 1);
+          if (range) located.push({ word, range });
+          cursor = start + length;
+        }
       }
       return located;
     }
@@ -298,7 +344,7 @@
       doc.body.append(layer);
       state.root = layer;
 
-      const located = locateWords(flattenWords(results), nodes, text);
+      const located = locateWords(results, nodes, text);
       // Every analysed block gets the chosen line spacing, not only blocks with a hint.
       located.forEach(({ range }) => spaceForReading(annotationBlock(range)));
       located.forEach(({ word, range }, index) => {
@@ -607,7 +653,6 @@
     .box span { display: block; }
     .sound { background: oklch(0.955 0.03 280); color: oklch(0.45 0.21 280); font-size: 24px; font-weight: 800; }
     .meaning { background: oklch(0.955 0.035 175); color: oklch(0.40 0.10 175); font-size: 16px; font-weight: 600; }
-    .meaning .dict { display: block; margin-top: 6px; font-size: 12px; font-weight: 500; opacity: 0.8; }
     .basis { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); color: rgba(0,0,0,.5); font-size: 12.5px; }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
     @media (prefers-reduced-motion: reduce) { .card { animation: none; } }`;
@@ -656,14 +701,12 @@
         children.push(el("p", "box meaning", ...parts.flatMap((gloss) => [
           el("small", "", gloss.부분 ? `‘${headword(gloss)}’의 뜻` : "쉬운 뜻"),
           el("span", "", (gloss.쉬운말 || gloss.뜻풀이).replace(/\s+/g, " ").trim()),
-          ...(gloss.쉬운말 ? [el("small", "dict", `사전 뜻: ${gloss.뜻풀이.replace(/\s+/g, " ").trim()}`)] : []),
         ])));
       }
       const basis = [];
       const sound = info.word?.근거?.발음;
       if (info.pronunciation && sound?.출처) basis.push(`읽는 법: ${sound.출처}`);
       else if (info.pronunciation && sound?.표준발음법?.length) basis.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-      if (parts.length) basis.push(parts[0].근거?.선택 === "llm_selected" ? (parts[0].쉬운말 ? "뜻: 한국어기초사전 뜻을 AI가 문맥에 맞게 쉽게 풀어 씀" : "뜻: 한국어기초사전 · 문맥으로 고름") : "뜻: 한국어기초사전");
       if (basis.length) children.push(el("p", "basis", `근거 — ${basis.join(" / ")}`));
       card.replaceChildren(...children);
       card.hidden = false;

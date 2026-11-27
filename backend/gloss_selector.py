@@ -148,7 +148,7 @@ def _store_selection(key: str, selection: Selection) -> None:
 
 def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict], surface: str = "") -> str:
     payload = {
-        "version": "gloss-selector-v7",
+        "version": "gloss-selector-v9",
         "surface": surface,
         "model": os.getenv("GLOSS_LLM_MODEL"),
         "sentence": sentence,
@@ -423,7 +423,7 @@ def _call_llm(prompt: dict, max_tokens: int, items_candidates: Optional[dict] = 
         return None
 
 
-def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict]]], surfaces: Optional[dict] = None) -> list[Optional[dict]]:
+def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict]]], surfaces: Optional[dict] = None, explain: Optional[set] = None) -> list[Optional[dict]]:
     """한 문장의 여러 단어를 단일 Claude 호출로 판별한다."""
     prompt = {
         "task": "한국어 학습자를 위한 쉬운 말 풀이 표시 여부와 문맥상 뜻을 고르세요.",
@@ -431,6 +431,7 @@ def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict
             "각 candidates에서 문맥에 맞는 사전 뜻의 index를 고르세요.",
             "show이면 easy에 쓰세요. " + EASY_RULE,
             "일상적으로 쉬운 말·기능어(예: 대신, 국민), 문맥에 맞는 후보가 없거나 확신이 낮으면 hide를 고르세요.",
+            "must_explain이 true인 낱말은 어차피 화면에 보여 주므로 hide하지 말고 그 뜻(index 0)의 easy를 꼭 쓰세요.",
             "JSON만 반환하세요: {\"decisions\":[{\"item_index\":정수,\"decision\":\"show\"|\"hide\",\"candidate_index\":정수|null,\"confidence\":0~1,\"easy\":문자열|null}]}",
         ],
         "sentence": sentence,
@@ -440,6 +441,7 @@ def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict
                 "word": word,
                 "surface": (surfaces or {}).get(item_index) or word,
                 "morpheme_tag": pos,
+                "must_explain": item_index in (explain or set()),
                 "candidates": [{"index": index, "definition": candidate.get("뜻풀이"), "field": candidate.get("분야")} for index, candidate in enumerate(candidates)],
             }
             for item_index, word, pos, candidates in items
@@ -457,7 +459,7 @@ def select(sentence: str, word: str, pos: str, candidates: list[dict], use_llm: 
     return select_many(sentence, [(word, pos, candidates)], use_llm=use_llm)[0]
 
 
-def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm: bool = True, surfaces: Optional[list[str]] = None) -> list[Selection]:
+def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm: bool = True, surfaces: Optional[list[str]] = None, parts: Optional[list[bool]] = None) -> list[Selection]:
     """한 문장의 모든 단어를 최대 한 번의 LLM 요청으로 선택하고 쉬운 말로 풀어 쓴다.
 
     ``surfaces``는 낱말이 문장에 실제로 나온 모양(바닷가에)이다. 쉬운 말을 그 모양에 맞춘다.
@@ -474,12 +476,16 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
             results[item_index] = rule_result
             continue
         usable = _usable_candidates(candidates)[:MAX_CANDIDATES_PER_WORD]
-        if rule_result.reason == "single_sense":
+        # 합성 낱말의 조각(인천국제공항 → 인천)은 지명일 수 있어 AI 판단을 따른다.
+        is_part = bool(parts and parts[item_index])
+        if rule_result.reason == "single_sense" and not is_part:
             single[item_index] = rule_result
         if not use_llm or not _llm_configured():
             # 보호자가 AI 사용을 끄거나 키가 없으면 문장을 밖으로 보내지 않는다.
-            # 뜻이 하나뿐인 고급어처럼 규칙만으로 확실한 경우만 보여 준다.
-            if rule_result.candidate or rule_result.reason != "ambiguous":
+            # 뜻이 하나뿐인 고급어처럼 규칙만으로 확실한 경우만 보여 준다(조각은 제외).
+            if is_part and rule_result.candidate:
+                results[item_index] = Selection(None, "part_without_llm")
+            elif rule_result.candidate or rule_result.reason != "ambiguous":
                 results[item_index] = rule_result
             else:
                 results[item_index] = Selection(None, "llm_off" if not use_llm else "llm_not_configured")
@@ -503,6 +509,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
         sentence,
         [(index, word, pos, candidates) for index, word, pos, candidates, _ in requested],
         {index: surfaces[index] for index, _, _, _, _ in requested},
+        set(single),
     ) if requested else []
     for (item_index, _, _, candidates, key), answer in zip(requested, answers):
         try:
@@ -525,7 +532,7 @@ def select_many(sentence: str, items: list[tuple[str, str, list[dict]]], use_llm
             # 뜻이 하나뿐인 낱말은 AI가 ‘쉬운 말’이라며 숨겨도 보여 준다(어른 기준으로 쉽다고
             # 보는 민관·협력 같은 말). AI는 쉬운 말 풀이만 보태고, 없으면 사전 뜻을 쓴다.
             selection = Selection(single[item_index].candidate, "single_sense", 1.0,
-                                  easy=clean_easy(answer.get("easy")) if answer.get("candidate_index") == 0 else None)
+                                  easy=clean_easy(answer.get("easy")))
         if answer is not None:
             _store_selection(key, selection)
         results[item_index] = selection

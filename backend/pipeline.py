@@ -138,6 +138,7 @@ _REASON_TEXT = {
     "ambiguous": "뜻이 여러 개라 규칙만으로는 고를 수 없음",
     "not_advanced_without_llm": "고급어가 아님",
     "single_sense": "뜻이 하나뿐인 고급·등급 없음 낱말 → 규칙으로 표시",
+    "part_without_llm": "합성 낱말의 조각이라 AI 없이는 표시하지 않음",
     "llm_selected": "AI가 후보 중 문맥에 맞는 뜻을 고름",
     "llm_uncertain": f"AI 확신이 기준({gloss_selector.MIN_CONFIDENCE:.2f}) 미만 → 표시하지 않고 선생님 검토로",
     "llm_hidden": "AI 판단: 쉬운 말이거나 맞는 뜻이 없음 → 표시 안 함",
@@ -277,6 +278,7 @@ def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = 
         use_llm=use_llm,
         # 합성 어절의 조각(장애)은 어절 전체 모양이 아니라 조각 이름에 맞춰 풀어 쓴다.
         surfaces=[word if results[index].get("합성") else results[index]["표기"] for index, word, _, _ in sentence_gloss_inputs],
+        parts=[bool(results[index].get("합성")) for index, _, _, _ in sentence_gloss_inputs],
     )
     called = [s for s in selections if s.reason in ("llm_selected", "llm_uncertain")]
     if called:

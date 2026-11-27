@@ -145,6 +145,11 @@ def _entry_rows(entry: dict) -> Optional[Tuple[tuple, List[tuple]]]:
     entry_id = str(entry.get("val") or entry.get("att") or "")
     if not entry_id:
         return None
+    # 관용구·속담(품사 없음)은 본 낱말과 같은 id를 쓴다(‘시작이 반이다’ = ‘시작’ 36687).
+    # 그대로 넣으면 본 낱말과 그 뜻풀이를 덮어써서 ‘시작(始作)’·‘학교’ 같은 기초어가
+    # 사라지고 남은 동형어(詩作)만 뜻으로 뜬다. 구 항목에는 따로 id를 준다.
+    if not entry_features.get("partOfSpeech"):
+        entry_id = "{}~{}".format(entry_id, _normalize(lemma))
     field = entry_features.get("subjectCategiory") or entry_features.get("semanticCategory")
 
     senses = []
@@ -186,6 +191,7 @@ def build(source_dir: Path = DATA_DIR, database_path: Path = DATABASE_PATH, repl
     temporary_path.unlink(missing_ok=True)
     entries_count = 0
     senses_count = 0
+    duplicates = 0
 
     try:
         with sqlite3.connect(temporary_path) as connection:
@@ -197,11 +203,16 @@ def build(source_dir: Path = DATA_DIR, database_path: Path = DATABASE_PATH, repl
                     if not rows:
                         continue
                     entry_row, senses = rows
-                    connection.execute("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", entry_row)
+                    if connection.execute("SELECT 1 FROM entries WHERE entry_id = ?", (entry_row[0],)).fetchone():
+                        duplicates += 1
+                        continue  # 같은 id가 또 나오면 먼저 나온 항목을 지킨다
+                    connection.execute("INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", entry_row)
                     connection.executemany("INSERT OR REPLACE INTO senses VALUES (?, ?, ?, ?)", senses)
                     entries_count += 1
                     senses_count += len(senses)
             connection.execute("ANALYZE")
+        if duplicates:
+            print("같은 id로 건너뛴 항목 {:,}개".format(duplicates))
         temporary_path.replace(database_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)

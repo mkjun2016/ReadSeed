@@ -76,11 +76,13 @@ const MAX_PAGE_WIDTH = 1400;
 const MAX_CANVAS_PIXELS = 5_000_000;
 // Scanned pages are read at this width; enough for body text without a huge upload.
 const OCR_WIDTH = 1800;
+const INK_WIDTH = 1200;
 // A block taller than this share of its page is the page's running text (a chapter
 // book's text page), so its patch may widen to the page margins.
 const TEXT_PAGE_SHARE = 0.45;
 // Wider than this, a PDF page is a two-page spread, which reads best in landscape.
 const SPREAD_ASPECT = 1.2;
+const BOOK_GAP = 6; // px between the two pages of an open book
 const portrait = window.matchMedia("(orientation: portrait)");
 const TYPE_HELP = {
   연음: "받침이 뒤 글자로 넘어가서 읽혀요",
@@ -245,15 +247,12 @@ function reportResult(summary, failed, results = []) {
     setStatus(`밑줄 없이 혼자 읽어요 · 막히는 낱말만 톡 누르면 답이 나와요${partial(failed)}`);
     return;
   }
-  const parts = [];
-  if (settings.pronunciation) parts.push(`읽는 법 ${summary.pronunciation}`);
-  if (settings.gloss) parts.push(`쉬운 뜻 ${summary.gloss}`);
-  const how = settings.reveal === "tap" ? "밑줄 친 낱말을 눌러 보세요" : "낱말을 누르면 크게 볼 수 있어요";
+  // Only notes the reader may need: how many hints there are is not one of them.
   const privacy = maskedCount ? ` · 개인정보로 보이는 ${maskedCount}곳은 가리고 보냈어요` : "";
-
   const unsure = results.filter((result) => result?.uncertain).length;
   const ocrNote = unsure ? ` · 글자 인식이 불확실한 ${unsure}문장은 힌트를 쉬었어요(‘원래 쪽 보기’로 비교)` : "";
-  setStatus((summary.pronunciation || summary.gloss ? `힌트 ${parts.join(" · ")} — ${how}` : "이 부분은 힌트 없이 읽을 수 있어요") + partial(failed) + ocrNote + adaptationNote() + difficultyNote(results) + privacy);
+  const notes = partial(failed) + ocrNote + adaptationNote() + difficultyNote(results) + privacy;
+  setStatus(summary.pronunciation || summary.gloss ? notes.replace(/^ · /, "") : `이 부분은 힌트 없이 읽을 수 있어요${notes}`);
 }
 
 // State changes what the child sees: a word read right on three days needs no hint,
@@ -598,25 +597,29 @@ async function openPdf(file) {
   }
 }
 
-async function layoutPdf() {
+// Pages are shown like an open book: two side by side in landscape, one in portrait
+// (or one when the PDF's own pages are already two-page spreads), turned with the
+// a tap on the right or left half of the screen, a swipe or the arrow keys.
+async function layoutPdf(start = pdf.current || 1) {
   const thisRun = run;
   pdf.observers.forEach((observer) => observer.disconnect());
+  pdf.observers = [];
   pdf.pages.forEach(releaseCanvas);
   pdf.visibility.clear();
   pdf.current = null;
   pdfAssist.clearOverlay();
   patchAssist.clearOverlay();
+  pdf.perScreen = !pdf.spread && !portrait.matches ? 2 : 1;
   const gutter = parseFloat(getComputedStyle(pdfPages).paddingLeft) || 20;
-  const fullWidth = Math.min(pdfSection.clientWidth - gutter * 2, MAX_PAGE_WIDTH);
-  // In landscape the original view fits a whole spread between the app bar and the
-  // dock. Large text keeps the full width instead, for longer re-set lines.
-  const room = window.innerHeight - $(".appbar").offsetHeight - $("#reader-dock").offsetHeight - 36;
+  const fullWidth = Math.min(pdfSection.clientWidth - gutter * 2, MAX_PAGE_WIDTH) - (pdf.perScreen - 1) * BOOK_GAP;
+  // At 100% a whole spread fits between the app bar and the dock.
+  const room = window.innerHeight - $(".appbar").offsetHeight - $("#reader-dock").offsetHeight - 24;
   const pages = [];
   for (let number = 1; number <= pdf.doc.numPages; number += 1) {
     const page = await pdf.doc.getPage(number);
     if (run !== thisRun) return;
     const base = page.getViewport({ scale: 1 });
-    const fit = pdf.spread && !portrait.matches && !pdf.large ? Math.min(fullWidth, room * (base.width / base.height)) : fullWidth;
+    const fit = Math.min(fullWidth / pdf.perScreen, room * (base.width / base.height));
     const viewport = page.getViewport({ scale: (fit * pdf.zoom) / base.width });
     const element = document.createElement("div");
     element.className = "readseed-pdf-page";
@@ -631,27 +634,89 @@ async function layoutPdf() {
     pages.push({ number, page, viewport, element, canvas: null, task: null, textLayer: null, content: null });
   }
   pdf.pages = pages;
-  pdfPages.replaceChildren(...pages.map((entry) => entry.element));
+  showSpread(start);
+}
 
-  // One observer paints pages shortly before they scroll into view and frees
-  // them well after they leave; the other finds the page being read.
-  const painter = new IntersectionObserver((records) => {
-    for (const record of records) {
-      const entry = pages[Number(record.target.dataset.page) - 1];
-      if (record.isIntersecting) paintPage(entry).catch(() => {});
-      else releaseCanvas(entry);
-    }
-  }, { rootMargin: "120% 0px" });
-  const reader = new IntersectionObserver((records) => {
-    for (const record of records) pdf.visibility.set(Number(record.target.dataset.page), record.intersectionRatio);
-    clearTimeout(pdf.timer);
-    pdf.timer = setTimeout(pickCurrentPage, 350);
-  }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
-  pages.forEach((entry) => {
-    painter.observe(entry.element);
-    reader.observe(entry.element);
+function spreadStart(number) {
+  const count = pdf.pages.length;
+  const clamped = Math.min(Math.max(1, number), count);
+  return Math.floor((clamped - 1) / pdf.perScreen) * pdf.perScreen + 1;
+}
+
+function shownPages(first = pdf.current) {
+  return pdf.pages.slice(first - 1, first - 1 + pdf.perScreen);
+}
+
+function showSpread(number, direction = 0) {
+  if (!pdf.pages.length) return;
+  const first = spreadStart(number);
+  if (first === pdf.current) return;
+  hideCard();
+  stopGuide();
+  pdfAssist.clearOverlay();
+  pdf.current = first;
+  const shown = shownPages(first);
+  pdfPages.replaceChildren(...shown.map((entry) => entry.element));
+  pdfPages.classList.remove("turn-next", "turn-prev");
+  if (direction) {
+    void pdfPages.offsetWidth; // restart the turn animation
+    pdfPages.classList.add(direction > 0 ? "turn-next" : "turn-prev");
+  }
+  pdfSection.scrollLeft = 0;
+  window.scrollTo(0, 0);
+  // Paint this spread and its neighbours, so turning a page is instant; free the rest.
+  const keepFrom = first - pdf.perScreen;
+  const keepTo = first + pdf.perScreen * 2;
+  pdf.pages.forEach((entry) => {
+    if (entry.number >= keepFrom && entry.number < keepTo) paintPage(entry).then(() => dropClippedSpans(entry)).catch(() => {});
+    else releaseCanvas(entry);
   });
-  pdf.observers = [painter, reader];
+  const last = shown[shown.length - 1].number;
+  $("#pdf-page-info").textContent = first === last ? `${first} / ${pdf.pages.length}쪽` : `${first}–${last} / ${pdf.pages.length}쪽`;
+  analyzeSpread(first).catch(reportError);
+}
+
+function turnPage(direction) {
+  if (mode !== "pdf" || !pdf.pages.length || !pdf.current) return;
+  const target = pdf.current + direction * pdf.perScreen;
+  if (target < 1 || target > pdf.pages.length) return;
+  showSpread(target, direction);
+}
+
+function stopGuide() {
+  if (!document.querySelector("#readseed-reading-controls")) return;
+  activeAssist?.handleMessage({ type: "READSEED_STOP_READING" });
+  setLabel("#guide-reading", "한 낱말씩 읽기");
+  $("#guide-reading").setAttribute("aria-pressed", "false");
+}
+
+async function analyzeSpread(first) {
+  const thisRun = run;
+  const isCurrent = () => run === thisRun && pdf.current === first;
+  const shown = shownPages(first);
+  const layouts = await Promise.all(shown.map((entry) => pageLayout(entry).catch((error) => {
+    console.error("[ReadSeed]", error);
+    return null;
+  })));
+  if (!isCurrent()) return;
+  shown.forEach(dropClippedSpans);
+  const readable = layouts.filter((layout) => layout && !layout.scanned);
+  const sentences = readable.flatMap((layout) => splitSentences(layout.text).slice(0, MAX_SENTENCES));
+  if (!sentences.length) {
+    setStatus(layouts.some((layout) => layout?.scanned)
+      ? "그림으로 된 쪽(스캔)은 아직 힌트를 볼 수 없어요. 글자가 있는 PDF를 열어 주세요."
+      : layouts.some((layout) => !layout) ? "이 쪽 글자를 읽지 못했어요. 다음 쪽으로 넘기거나 다시 열어 주세요." : "이 쪽에는 읽을 글자가 없어요.");
+    return;
+  }
+  pdfAssist.setTarget(pdfPages, null);
+  activeAssist = pdfAssist;
+  await analyze(pdfAssist, sentences, spreadKey(first), pdf.cache, isCurrent);
+  // Read the next spread ahead so turning to it is quick.
+  shownPages(first + pdf.perScreen).forEach((entry) => pageLayout(entry).catch(() => {}));
+}
+
+function spreadKey(first) {
+  return `${first}/${pdf.perScreen}`;
 }
 
 async function paintPage(entry) {
@@ -698,31 +763,237 @@ async function ensureTextLayer(entry) {
     entry.element.append(container);
     entry.content = await entry.page.getTextContent();
     await new pdfjs.TextLayer({ textContentSource: entry.content, container, viewport: entry.viewport }).render();
+    entry.ink = await inkMap(entry);
     return container;
   })();
   return entry.textLayer;
 }
 
-function pickCurrentPage() {
-  let best = null;
-  let bestRatio = 0;
-  for (const [number, ratio] of pdf.visibility) {
-    if (ratio > bestRatio) {
-      best = number;
-      bestRatio = ratio;
+// Fits the text layer to the page as drawn. Text the page clips away (a long page
+// cut into sheets repeats the cut row on the next sheet) is dropped, so no underline
+// or reading highlight lands on blank paper. The rest is set in a stand-in font
+// whose letter and space widths differ from the PDF's, so underlines drift along a
+// line; each line's words are lined up with the words seen in the page image.
+// Needs the page on screen to measure.
+function dropClippedSpans(entry) {
+  if (entry.clipChecked || !entry.ink || !entry.textLayer || !entry.element.isConnected) return;
+  const container = entry.element.querySelector(".textLayer");
+  const box = container?.getBoundingClientRect();
+  if (!box?.width || !box.height) return;
+  const aligned = [];
+  const unsure = [];
+  for (const span of [...container.querySelectorAll("span")]) {
+    const rect = span.getBoundingClientRect();
+    if (!rect.width || !span.textContent.trim()) continue;
+    if (!looksLikeText(entry, span, rect, box)) span.remove();
+    else (alignSpan(entry, span, box) ? aligned : unsure).push(span);
+  }
+  // Text hidden under a picture can sit right on top of visible text (a sample page
+  // pasted over its own source text). Lines matched to the image win; a line that
+  // could not be matched and covers one that was is the hidden copy.
+  const boxes = aligned.map((span) => span.getBoundingClientRect());
+  for (const span of unsure) {
+    const rect = span.getBoundingClientRect();
+    const covers = boxes.some((other) => {
+      const width = Math.min(rect.right, other.right) - Math.max(rect.left, other.left);
+      const height = Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top);
+      return width > 0 && height > 0 && width * height > 0.3 * Math.min(rect.width * rect.height, other.width * other.height);
+    });
+    if (covers) span.remove();
+  }
+  entry.clipChecked = true;
+}
+
+// Drawn text breaks into many small marks along the line; a colour edge or a box
+// border behind invisible text does not. Text with no such marks is not on screen.
+function looksLikeText(entry, span, rect, box) {
+  if (!hasInk(entry, (rect.left - box.left) / box.width, (rect.top - box.top) / box.height,
+    rect.width / box.width, rect.height / box.height)) return false;
+  const profile = inkProfile(entry, rect, box, 0);
+  if (!profile) return true;
+  let marks = 0;
+  let inside = false;
+  for (const value of profile.columns) {
+    const dark = profile.isDark(value);
+    if (dark && !inside) marks += 1;
+    inside = dark;
+  }
+  const letters = span.textContent.replace(/\s/g, "").length;
+  return marks >= Math.max(1, Math.ceil(letters * 0.3));
+}
+
+// The darkest grey in each pixel column across the middle of a text-layer line.
+function inkProfile(entry, rect, box, padding) {
+  const ink = entry.ink;
+  if (!ink) return null;
+  const sx = ink.width / box.width;
+  const sy = ink.height / box.height;
+  const left = Math.max(0, Math.floor((rect.left - padding - box.left) * sx));
+  const right = Math.min(ink.width, Math.ceil((rect.right + padding - box.left) * sx));
+  // The glyph body sits in the middle of the line box; skip its edges, which
+  // may touch the lines above and below.
+  const top = Math.max(0, Math.floor((rect.top + rect.height * 0.15 - box.top) * sy));
+  const bottom = Math.min(ink.height, Math.ceil((rect.bottom - rect.height * 0.15 - box.top) * sy));
+  if (right - left < 4 || bottom - top < 2) return null;
+  const columns = new Uint8Array(right - left);
+  let background = 0;
+  let darkest = 255;
+  for (let col = left; col < right; col += 1) {
+    let low = 255;
+    for (let row = top; row < bottom; row += 1) low = Math.min(low, ink.grey[row * ink.width + col]);
+    columns[col - left] = low;
+    background = Math.max(background, low);
+    darkest = Math.min(darkest, low);
+  }
+  // Pale text on a pale ground still counts: the threshold follows the contrast.
+  const threshold = Math.max(25, (background - darkest) * 0.45);
+  return { columns, background, left, sx, sy, isDark: (value) => background - value > threshold };
+}
+
+// Word starts seen in the page image along one text-layer line, in client pixels.
+function inkWordStarts(entry, rect, box) {
+  const profile = inkProfile(entry, rect, box, rect.height * 1.2);
+  if (!profile) return null;
+  const { columns, left, sx, sy, isDark } = profile;
+  const gap = Math.max(2, Math.round(rect.height * sy * 0.22));
+  const starts = [];
+  let blank = gap;
+  for (let i = 0; i < columns.length; i += 1) {
+    if (isDark(columns[i])) {
+      if (blank >= gap) starts.push(box.left + (left + i) / sx);
+      blank = 0;
+    } else blank += 1;
+  }
+  return starts;
+}
+
+function alignSpan(entry, span, box) {
+  const node = span.firstChild;
+  const transform = span.style.transform || "";
+  if (node?.nodeType !== Node.TEXT_NODE || (transform && !/^scaleX\([\d.]+\)$/.test(transform))) return false;
+  const words = [...node.nodeValue.matchAll(/\S+/g)];
+  if (words.length < 2) return false;
+  const rect = span.getBoundingClientRect();
+  // Gaps inside a word can look like word gaps in small print, so there may be more
+  // seen starts than words; every real word start is among them.
+  const seen = inkWordStarts(entry, rect, box);
+  if (!seen || seen.length < words.length) return false;
+  const scale = Number(transform.match(/[\d.]+/)?.[0] || 1);
+  const range = document.createRange();
+  const points = words.map((word) => {
+    range.setStart(node, word.index);
+    range.setEnd(node, word.index + 1);
+    return {
+      x: (range.getBoundingClientRect().left - rect.left) / scale, // unscaled offset
+      n: (node.nodeValue.slice(0, word.index).match(/\s/g) || []).length,
+    };
+  });
+  // Model: start = rect.left + shift + c·x + d·spaces. Start from the layer as set,
+  // match each word to the nearest seen start, refit, and repeat.
+  let shift = 0;
+  let c = scale;
+  let d = 0;
+  const predict = (point) => rect.left + shift + c * point.x + d * point.n;
+  for (let round = 0; round < 4; round += 1) {
+    const targets = points.map((point) => {
+      const at = predict(point);
+      return seen.reduce((best, value) => (Math.abs(value - at) < Math.abs(best - at) ? value : best), seen[0]);
+    });
+    // Least squares for shift, c and d (normal equations, 3×3).
+    const rows = points.map((point) => [1, point.x, point.n]);
+    const ata = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const atb = [0, 0, 0];
+    rows.forEach((row, k) => {
+      for (let i = 0; i < 3; i += 1) {
+        atb[i] += row[i] * (targets[k] - rect.left);
+        for (let j = 0; j < 3; j += 1) ata[i][j] += row[i] * row[j];
+      }
+    });
+    ata[2][2] += 0.5; // a light pull on the space term keeps two-word lines solvable
+    const solved = solve3(ata, atb);
+    if (!solved) return false;
+    [shift, c, d] = solved;
+  }
+  const fontSize = parseFloat(getComputedStyle(span).fontSize) || rect.height;
+  const spacing = d / c;
+  if (!(c > scale * 0.6 && c < scale * 1.6) || Math.abs(spacing) > fontSize || Math.abs(shift) > rect.height * 1.5) return false;
+  // Only a consistent correction is trusted: each word must land on a seen start.
+  const misfit = points.some((point) => Math.min(...seen.map((value) => Math.abs(value - predict(point)))) > rect.height * 0.3);
+  if (misfit) return false;
+  span.style.wordSpacing = `${spacing}px`;
+  span.style.transform = `translateX(${shift}px) scaleX(${c})`;
+  return true;
+}
+
+// Solves a 3×3 linear system (Cramer's rule); null when it has no single answer.
+function solve3(m, v) {
+  const det = (a) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+    - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  const base = det(m);
+  if (Math.abs(base) < 1e-9) return null;
+  return [0, 1, 2].map((col) => det(m.map((row, i) => row.map((value, j) => (j === col ? v[i] : value)))) / base);
+}
+
+// A small grey copy of the rendered page, to tell drawn text from clipped text.
+async function inkMap(entry) {
+  const base = entry.page.getViewport({ scale: 1 });
+  // About two image pixels per screen pixel, so small print still shows its word gaps.
+  const width = Math.min(Math.max(INK_WIDTH, entry.viewport.width * 2), 2400);
+  const viewport = entry.page.getViewport({ scale: width / base.width });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  try {
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    await entry.page.render({ canvasContext: context, viewport }).promise;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const grey = new Uint8Array(canvas.width * canvas.height);
+    for (let i = 0; i < grey.length; i += 1) grey[i] = (data[i * 4] * 3 + data[i * 4 + 1] * 6 + data[i * 4 + 2]) / 10;
+    return { grey, width: canvas.width, height: canvas.height };
+  } catch {
+    return null;
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+// Whether anything is drawn in a page-relative box (0–1). A box of one flat colour
+// holds no visible text, whatever the background colour. Unknown counts as drawn.
+function hasInk(entry, x, y, w, h) {
+  const ink = entry.ink;
+  if (!ink) return true;
+  const left = Math.max(0, Math.floor(x * ink.width));
+  const right = Math.min(ink.width, Math.ceil((x + w) * ink.width));
+  const top = Math.max(0, Math.floor(y * ink.height));
+  const bottom = Math.min(ink.height, Math.ceil((y + h) * ink.height));
+  if (right <= left || bottom <= top) return false;
+  let low = 255;
+  let high = 0;
+  for (let row = top; row < bottom; row += 1) {
+    for (let col = left; col < right; col += 1) {
+      const value = ink.grey[row * ink.width + col];
+      if (value < low) low = value;
+      if (value > high) high = value;
     }
   }
-  if (!best || best === pdf.current) return;
-  pdf.current = best;
-  hideCard();
-  analyzePdfPage(pdf.pages[best - 1]).catch(reportError);
+  return high - low > 40;
 }
 
 // PDF.js text items grouped into lines, in page-relative coordinates (0–1, top left).
+// Items come in content-stream order, which is not always reading order: a bold label
+// at the start of a line is often written after the rest of that line. So items are
+// first gathered into runs in stream order, then runs on the same baseline that touch
+// each other are joined left to right.
 function textLayerLines(entry) {
   const base = entry.page.getViewport({ scale: 1 });
-  const lines = [];
-  let line = null;
+  const runs = [];
+  let run = null;
+  const close = () => {
+    if (run) runs.push(run);
+    run = null;
+  };
   for (const item of entry.content?.items || []) {
     if (!item.str && !item.hasEOL) continue;
     const [left, baseline] = base.convertToViewportPoint(item.transform[4], item.transform[5]);
@@ -730,35 +1001,60 @@ function textLayerLines(entry) {
     const top = baseline - height;
     // Some PDF writers emit U+0001 where a space was typed.
     const str = item.str.replace(/[\u0000-\u001f]/g, " ");
-    // A new line starts on a new baseline, or after a wide gap on the same baseline:
-    // that gap is a table cell border, and the next cell is separate text. Writers
-    // often fill such a gap with one wide space item, which also ends the cell.
+    // A new run starts on a new baseline, after a wide gap on the same baseline (a
+    // table cell border: the next cell is separate text), or when the text jumps back
+    // to the left. Writers often fill a cell gap with one wide space item.
     const wideSpace = !str.trim() && item.width > height * 1.2;
-    if (line && (wideSpace || Math.abs(line.top - top) > height * 0.5 || (str.trim() && left - line.right > height * 1.6))) {
-      lines.push(line);
-      line = null;
-    }
+    if (run && (wideSpace || Math.abs(run.top - top) > height * 0.5
+      || (str.trim() && (left - run.right > height * 1.6 || left < run.right - height * 0.5)))) close();
     if (wideSpace) continue;
     if (str) {
-      line ??= { text: "", left, right: left, top, bottom: baseline };
-      line.text += str;
-      line.left = Math.min(line.left, left);
-      line.right = Math.max(line.right, left + item.width);
-      line.bottom = Math.max(line.bottom, baseline);
+      run ??= { pieces: [], left, right: left, top, bottom: baseline, height };
+      run.pieces.push({ text: str, left });
+      run.left = Math.min(run.left, left);
+      run.right = Math.max(run.right, left + item.width);
+      run.bottom = Math.max(run.bottom, baseline);
+      run.height = Math.max(run.height, height);
     }
-    if (item.hasEOL && line) {
-      lines.push(line);
-      line = null;
-    }
+    if (item.hasEOL) close();
   }
-  if (line) lines.push(line);
-  return lines.filter((item) => item.text.trim()).map((item) => ({
-    text: item.text,
-    x: item.left / base.width,
-    y: item.top / base.height,
-    w: (item.right - item.left) / base.width,
-    h: (item.bottom - item.top) / base.height,
-  }));
+  close();
+  const lines = [];
+  for (const next of runs) {
+    if (!next.pieces.some((piece) => piece.text.trim())) continue;
+    const near = lines.find((line) => Math.abs(line.top - next.top) <= Math.min(line.height, next.height) * 0.5
+      && Math.max(line.left, next.left) - Math.min(line.right, next.right) <= Math.min(line.height, next.height) * 1.6);
+    if (!near) {
+      lines.push({ ...next, parts: [next] });
+      continue;
+    }
+    near.parts.push(next);
+    near.left = Math.min(near.left, next.left);
+    near.right = Math.max(near.right, next.right);
+    near.top = Math.min(near.top, next.top);
+    near.bottom = Math.max(near.bottom, next.bottom);
+    near.height = Math.max(near.height, next.height);
+  }
+  return lines.filter((line) => hasInk(entry, line.left / base.width, line.top / base.height,
+    (line.right - line.left) / base.width, (line.bottom - line.top) / base.height)).map((line) => {
+    const parts = [...line.parts].sort((a, b) => a.left - b.left);
+    let text = "";
+    let right = null;
+    for (const part of parts) {
+      const piece = part.pieces.map((p) => p.text).join("");
+      // Separate runs joined here had a visible gap between them, or none at all.
+      if (right !== null && part.left - right > line.height * 0.15 && !/\s$/.test(text) && !/^\s/.test(piece)) text += " ";
+      text += piece;
+      right = part.right;
+    }
+    return {
+      text,
+      x: line.left / base.width,
+      y: line.top / base.height,
+      w: (line.right - line.left) / base.width,
+      h: (line.bottom - line.top) / base.height,
+    };
+  });
 }
 
 // A scanned page has no text layer, so its image is read on the server.
@@ -980,12 +1276,10 @@ async function changeZoom(direction) {
   if (!pdf.doc) return;
   const index = ZOOM_STEPS.indexOf(pdf.zoom) + direction;
   if (index < 0 || index >= ZOOM_STEPS.length) return;
-  const keep = pdf.current || 1;
   pdf.zoom = ZOOM_STEPS[index];
   updateZoomLabel();
   hideCard();
-  await layoutPdf();
-  pdf.pages[keep - 1]?.element.scrollIntoView({ block: "start" });
+  await layoutPdf(pdf.current || 1);
 }
 
 // ---------- Hint card ----------
@@ -1066,11 +1360,7 @@ function meaningParts(glosses) {
     const text = document.createElement("span");
     text.className = "meaning-text";
     text.textContent = meaningOf(gloss);
-    if (!gloss.쉬운말) return [caption, text];
-    const dictionary = document.createElement("small");
-    dictionary.className = "meaning-dict";
-    dictionary.textContent = `사전 뜻: ${gloss.뜻풀이.replace(/\s+/g, " ").trim()}`;
-    return [caption, text, dictionary];
+    return [caption, text];
   });
 }
 
@@ -1088,7 +1378,6 @@ function basisText(info, candidate) {
   const sound = info.word?.근거?.발음;
   if (info.pronunciation && sound?.출처) parts.push(`읽는 법: ${sound.출처} ‘${sound.표제어}’`);
   else if (info.pronunciation && sound?.표준발음법?.length) parts.push(`읽는 법: 표준발음법 제${sound.표준발음법.join("·")}항`);
-  if (candidate) parts.push(candidate.근거?.선택 === "llm_selected" ? (candidate.쉬운말 ? "뜻: 한국어기초사전 뜻을 AI가 문맥에 맞게 쉽게 풀어 씀" : "뜻: 한국어기초사전 · 문맥으로 고름") : candidate.근거?.선택 === "teacher" ? "뜻: 한국어기초사전 · 선생님이 확인" : "뜻: 한국어기초사전");
   const why = info.word?.맞춤 === "struggle" ? ` · 자주 막힌 ${josa(info.word.유형, "이라", "라")} 꼭 보여 줘요` : "";
   return parts.length ? `근거 — ${parts.join(" / ")}${why}` : "";
 }
@@ -1155,6 +1444,7 @@ function contextOf(range) {
 function onTextTap(event) {
   const info = wordNear(event.clientX, event.clientY) || (dailyTest && plainWordAt(event.clientX, event.clientY));
   if (info) showCard(info);
+  else if (mode === "pdf" && card.hidden) turnPage(event.clientX > window.innerWidth / 2 ? 1 : -1);
   else hideCard();
 }
 
@@ -2002,11 +2292,35 @@ function rerender() {
     const results = [...textCache.values()].pop();
     if (results) textAssist.renderAssistance(withState(results), assistSettings());
   } else if (mode === "pdf" && pdf.current) {
-    const results = pdf.cache.get(pdf.current);
+    const results = pdf.cache.get(spreadKey(pdf.current));
     if (results) activeAssist?.renderAssistance(withState(results), assistSettings());
   }
 }
 $("#pdf-view").addEventListener("click", () => toggleLargeText().catch(reportError));
+pdfPages.addEventListener("animationend", () => activeAssist?.scheduleOverlayPositionUpdate?.());
+document.addEventListener("keydown", (event) => {
+  if (mode !== "pdf" || $("#reader").hidden || event.target.closest?.("input, textarea, select")) return;
+  if (event.key === "ArrowRight" || event.key === "PageDown") turnPage(1);
+  else if (event.key === "ArrowLeft" || event.key === "PageUp") turnPage(-1);
+  else return;
+  event.preventDefault();
+});
+// A sideways swipe turns the page, unless a zoomed page is being scrolled sideways.
+let swipe = null;
+pdfPages.addEventListener("touchstart", (event) => {
+  const touch = event.touches[0];
+  swipe = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY, scroll: pdfSection.scrollLeft } : null;
+}, { passive: true });
+pdfPages.addEventListener("touchend", (event) => {
+  const touch = event.changedTouches[0];
+  if (!swipe || !touch) return;
+  const dx = touch.clientX - swipe.x;
+  const dy = touch.clientY - swipe.y;
+  const scrolled = Math.abs(pdfSection.scrollLeft - swipe.scroll) > 2;
+  swipe = null;
+  if (scrolled || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
+  turnPage(dx < 0 ? 1 : -1);
+}, { passive: true });
 $("#zoom-in").addEventListener("click", () => changeZoom(1).catch(reportError));
 $("#zoom-out").addEventListener("click", () => changeZoom(-1).catch(reportError));
 $("#hint-more").addEventListener("click", () => {
@@ -2100,7 +2414,7 @@ window.addEventListener("resize", () => {
   hideCard();
   if (mode === "pdf" && pdf.doc) {
     clearTimeout(pdf.resizeTimer);
-    pdf.resizeTimer = setTimeout(() => layoutPdf().catch(reportError), 250);
+    pdf.resizeTimer = setTimeout(() => layoutPdf(pdf.current || 1).catch(reportError), 250);
   }
 });
 
