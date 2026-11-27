@@ -39,7 +39,6 @@
     <main id="home" class="home">
       <section class="welcome">
         <div class="welcome-text">
-          <p class="eyebrow">스스로 읽기 친구</p>
           <h1>오늘은 무엇을 <br />읽을까요?</h1>
           <p>읽다가 막히는 낱말을 <b>톡</b> 누르면, 어떻게 읽는지 알려 줄게요. 글은 바꾸지 않고 옆에서 살짝 도와요.</p>
         </div>
@@ -87,11 +86,7 @@
       </section>
 
       <section class="home-section library" aria-labelledby="samples-title">
-        <div class="section-head">
-          <h2 id="samples-title">책장에서 골라 읽기</h2>
-          <p>표지를 누르면 바로 펼쳐져요.</p>
-        </div>
-        <h3 class="shelf-title">선생님이 고른 읽기 책</h3>
+        <h3 class="shelf-title" id="samples-title">선생님이 고른 읽기 책</h3>
         <div id="book-shelf" class="shelf" role="list"></div>
         <h3 class="shelf-title">짧은 글로 먼저 연습해요 <span>소리와 글자가 다른 낱말이 많아요</span></h3>
         <div id="sample-list" class="shelf" role="list"></div>
@@ -101,18 +96,17 @@
       <section class="home-section" aria-labelledby="own-title">
         <div class="section-head">
           <h2 id="own-title">내 글 읽기</h2>
-          <p>교과서·학습지·알림장도 그대로 읽을 수 있어요.</p>
         </div>
         <div class="two-up">
           <div class="tile">
             <div class="tile-head">
               <i class="tile-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg></i>
-              <div><h3>PDF 열기</h3><p>교과서·학습지 PDF. 스캔한 책 PDF도 돼요.</p></div>
+              <div><h3>PDF 열기</h3><p>교과서·학습지 PDF를 책처럼 펼쳐 읽어요.</p></div>
             </div>
-            <ul class="tile-points">
-              <li>원래 쪽을 그대로 펼치고, 막힌 낱말만 눌러요</li>
-              <li>글자가 작으면 <b>＋</b>로 크게 확대해요</li>
-            </ul>
+            <div id="pdf-drop" class="pdf-drop" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 16V5M7 10l5-5 5 5M5 19h14" /></svg>
+              <span>PDF를 여기로 끌어다 놓아도 돼요</span>
+            </div>
             <label class="primary-button file-button">
               PDF 고르기
               <input id="pdf-input" type="file" accept="application/pdf,.pdf" />
@@ -123,7 +117,8 @@
               <i class="tile-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3" /></svg></i>
               <div><h3>글 붙여 넣기</h3><p>읽고 싶은 글을 복사해 넣어요.</p></div>
             </div>
-            <textarea id="paste-input" rows="4" placeholder="여기에 글을 붙여 넣어요."></textarea>
+            <textarea id="paste-input" rows="4" placeholder="여기에 글을 붙여 넣어요. (2,000자까지)"></textarea>
+            <p id="paste-count" class="paste-count" aria-live="polite"></p>
             <button id="paste-start" class="primary-button" type="button">이 글 읽기</button>
           </div>
         </div>
@@ -133,7 +128,6 @@
       <section class="home-section grownups" aria-labelledby="grownups-title">
         <div class="section-head">
           <h2 id="grownups-title">보호자·선생님께</h2>
-          <p>아이와 함께 쓰는 어른을 위한 도구예요. ReadSeed는 진단하지 않아요.</p>
         </div>
         <div class="grown-grid">
           <button id="home-review" class="grown-card" type="button">

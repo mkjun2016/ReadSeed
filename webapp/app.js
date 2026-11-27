@@ -32,7 +32,9 @@ let readingTitle = "";
 // Words the child has not seen for this long are removed from the device.
 const RETENTION_DAYS = 90;
 // Longer pastes are cut so the device and server stay responsive; the child is told.
-const MAX_TEXT_CHARS = 20_000;
+// Pasted text: about one or two textbook pages, a length a child can read in one go.
+// Every sentence of it is analysed (MAX_SENTENCES covers 2,000 characters).
+const MAX_TEXT_CHARS = 2_000;
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
 // A word is learned once it is read right, alone, on this many different days in a row.
 const LEARNED_STREAK = 3;
@@ -64,7 +66,7 @@ const HINT_TYPES = {
 const FONT_SIZES = { 1: 16, 2: 20, 3: 24, 4: 28 };
 const LINE_GAPS = { normal: 1.9, wide: 2.3, wider: 2.7 };
 const TRACKING = { normal: "0.01em", wide: "0.08em" };
-const MAX_SENTENCES = 40;
+const MAX_SENTENCES = 80;
 const MAX_PAGE_SENTENCES = 120; // a dense PDF page (a newspaper) has far more than 40
 const MAX_CONCURRENT_REQUESTS = 3;
 const RENDER_EVERY = 3;
@@ -2165,10 +2167,33 @@ $("#home-button").addEventListener("click", leaveReader);
 $("#settings-button").addEventListener("click", () => openDialog($("#settings")));
 $("#guide-button").addEventListener("click", () => openDialog($("#guide")));
 $("#guide").addEventListener("close", () => writeStorage(GUIDE_KEY, "1"));
+// Dropping a PDF on its tile opens it, the same as choosing it.
+const pdfTile = $("#pdf-drop").closest(".tile");
+pdfTile.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  $("#pdf-drop").classList.add("over");
+});
+pdfTile.addEventListener("dragleave", () => $("#pdf-drop").classList.remove("over"));
+pdfTile.addEventListener("drop", (event) => {
+  event.preventDefault();
+  $("#pdf-drop").classList.remove("over");
+  const file = event.dataTransfer?.files?.[0];
+  if (file) openPdf(file).catch(reportError);
+});
 $("#pdf-input").addEventListener("change", (event) => {
   openPdf(event.target.files?.[0]).catch(reportError);
   event.target.value = "";
 });
+function updatePasteCount() {
+  const length = $("#paste-input").value.trim().length;
+  const count = $("#paste-count");
+  count.textContent = length > MAX_TEXT_CHARS
+    ? `${length.toLocaleString()}자 · ${MAX_TEXT_CHARS.toLocaleString()}자가 넘어서 앞부분만 읽어요`
+    : `${length.toLocaleString()} / ${MAX_TEXT_CHARS.toLocaleString()}자`;
+  count.classList.toggle("over", length > MAX_TEXT_CHARS);
+}
+$("#paste-input").addEventListener("input", updatePasteCount);
+updatePasteCount();
 $("#paste-start").addEventListener("click", () => {
   const raw = $("#paste-input").value;
   const checked = checkText(raw);

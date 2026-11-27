@@ -354,10 +354,9 @@ body[data-view="home"] #home-button { display: none; }
 .tile-head p { margin: 0; color: var(--ink-soft); font-size: 15px; }
 .tile-icon { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 14px; background: var(--brand-tint); color: var(--brand-strong); }
 .tile-icon svg { width: 26px; height: 26px; }
-.tile-points { display: grid; gap: 4px; margin: 0; padding-left: 1.1em; color: var(--ink-soft); font-size: 15px; }
-.tile-points b { color: var(--ink); }
 .tile textarea {
   width: 100%;
+  flex: 1;
   min-height: 112px;
   padding: 12px 14px;
   border: 1px solid var(--line-strong);
@@ -410,6 +409,7 @@ body[data-view="home"] #home-button { display: none; }
   display: grid;
   align-content: start;
   gap: 4px;
+  flex: 1;
   min-height: 112px;
   padding: 16px 18px;
   border: 0;
@@ -1033,3 +1033,21 @@ body[data-test="on"] #readseed-overlay .readseed-marker { display: none !importa
 .daily-words li.alone { background: var(--meaning-tint); color: var(--meaning); }
 .daily-words li.stuck { background: var(--sound-tint); color: var(--sound); }
 body[data-test="on"] .tip-demo { text-decoration: none; }
+
+.paste-count { margin: -4px 0 8px; text-align: right; color: var(--ink-faint); font-size: 13px; font-variant-numeric: tabular-nums; }
+.paste-count.over { color: oklch(0.55 0.16 50); font-weight: 600; }
+.pdf-drop {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  flex: 1;
+  min-height: 112px;
+  border: 1.5px dashed var(--line);
+  border-radius: 14px;
+  color: var(--ink-faint);
+  font-size: 14px;
+  text-align: center;
+}
+.pdf-drop svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pdf-drop.over { border-color: var(--brand); background: var(--brand-tint); color: var(--brand-strong); }

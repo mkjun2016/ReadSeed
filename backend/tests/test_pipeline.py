@@ -38,7 +38,8 @@ class PipelineTest(unittest.TestCase):
 
     def test_lookup_gloss_hides_nonlocal_and_ambiguous_candidates_without_llm(self):
         ambiguous = [entry("첫째", local_id="1:1"), entry("둘째", local_id="2:1")]
-        with patch.object(pipeline.dict_lookup, "lookup", return_value=ambiguous):
+        # "without LLM": keep a configured API key on this machine from answering.
+        with patch.object(pipeline.dict_lookup, "lookup", return_value=ambiguous), patch.object(gloss_selector, "_llm_configured", return_value=False):
             self.assertEqual(pipeline._lookup_gloss("조사를 시작했다.", "조사", "NNG"), [])
         with patch.object(pipeline.dict_lookup, "lookup", return_value=[entry("원격", local_id=None)]):
             self.assertEqual(pipeline._lookup_gloss("문장", "단어", "NNG"), [])

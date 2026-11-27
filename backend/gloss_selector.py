@@ -148,7 +148,7 @@ def _store_selection(key: str, selection: Selection) -> None:
 
 def _fingerprint(sentence: str, word: str, pos: str, candidates: list[dict], surface: str = "") -> str:
     payload = {
-        "version": "gloss-selector-v10",
+        "version": "gloss-selector-v11",
         "surface": surface,
         "model": os.getenv("GLOSS_LLM_MODEL"),
         "sentence": sentence,
@@ -432,7 +432,9 @@ def _request_llm_batch(sentence: str, items: list[tuple[int, str, str, list[dict
         "rules": [
             "각 candidates에서 문맥에 맞는 사전 뜻의 index를 고르세요.",
             "show이면 easy에 쓰세요. " + EASY_RULE,
-            "일상적으로 쉬운 말·기능어(예: 대신, 국민), 문맥에 맞는 후보가 없거나 확신이 낮으면 hide를 고르세요.",
+            "읽기가 어려운 초등 3~4학년 아이가 읽는다고 생각하세요. 아이가 이미 잘 아는 일상어·기능어(예: 대신, 국민, 학교, 친구, 음악)는 hide. "
+            "뉴스·공문·교과서의 한자어 개념어·행정 용어(예: 도입, 해소, 제도, 추진, 확장, 항공사, 발송)는 아이가 막히기 쉬우니 맞는 뜻이 있으면 show.",
+            "문맥에 맞는 후보가 없거나 어느 뜻인지 확신이 낮으면 hide를 고르세요.",
             "must_explain이 true인 낱말은 어차피 화면에 보여 주므로 hide하지 말고 그 뜻(index 0)의 easy를 꼭 쓰세요.",
             "JSON만 반환하세요: {\"decisions\":[{\"item_index\":정수,\"decision\":\"show\"|\"hide\",\"candidate_index\":정수|null,\"confidence\":0~1,\"easy\":문자열|null}]}",
         ],

@@ -231,6 +231,14 @@ def annotate_sentence(sentence: str, use_llm: bool = True, trace: list | None = 
         clean = re.sub(r"[^가-힣]", "", eojeol)
         if not clean:
             continue
+        if re.search(r"[가-힣][A-Za-z0-9]+[가-힣]", eojeol):
+            # 한글 사이에 영문·숫자가 끼어 붙은 어절(걸그룹8인조, 분류Hearts2Hearts대한민국의).
+            # 한글만 이어 붙이면 없는 낱말이 되고 연음까지 생겨(걸그룹인조[걸그루빈조]) 틀린
+            # 힌트가 나온다. 웹 문서에서 줄이 붙어 생기는 일이라 확실하지 않으면 보이지 않는다.
+            log({"단계": "발음", "도구": "규칙", "어절": eojeol, "판단": "한글 사이에 영문·숫자가 붙어 있음 → 표시 안 함"})
+            results.append({"어절": eojeol, "표기": clean, "발음": clean, "다름": False, "유형": "동일", "신뢰": False,
+                            "형태소": morphs, "뜻풀이후보": [], "근거": {"발음": None}})
+            continue
 
         # 발음은 어절만 따로 (연음 등은 조사·어미까지 붙어야 정확히 계산되지만, 문장
         # 전체를 넣으면 다른 어절로 규칙이 새어나간다)
